@@ -331,7 +331,7 @@ test("parseCompressArgs reports per-entry invalid reasons", () => {
     assert.deepEqual(diagnostics.invalidReasons, [
         "entry 1: missing range bounds (need startRef/startId and endRef/endId)",
         "entry 2: missing summary",
-        "entry 3: line entry: no mNNNNN refs in header",
+        "entry 3: line entry: no mNNNNN/bN refs in header",
     ]);
 });
 
@@ -616,6 +616,15 @@ test("line form: single string entry (header + summary) and single bare-ref entr
     assert.equal(b.ranges[0]!.endRef, "m00042");
 });
 
+test("line form: all spec separators — tilde, to, unicode ellipsis, three dots", () => {
+    for (const header of ["m00150~m00220", "m00150 to m00220", "m00150…m00220", "m00150...m00220"]) {
+        const { ranges, diagnostics } = parseCompressArgs({ content: [`${header}\nsum`] });
+        assert.equal(diagnostics.kind, "ok", `separator in ${JSON.stringify(header)}`);
+        assert.equal(ranges[0]!.startRef, "m00150", `separator in ${JSON.stringify(header)}`);
+        assert.equal(ranges[0]!.endRef, "m00220", `separator in ${JSON.stringify(header)}`);
+    }
+});
+
 test("line form: header line with no summary after it is dropped, others survive", () => {
     const { ranges, diagnostics } = parseCompressArgs({
         content: [
@@ -696,5 +705,29 @@ test("line form: entry whose first line has no refs is dropped, not salvaged fro
     assert.equal(ranges.length, 1);
     assert.equal(ranges[0]!.startRef, "m00001");
     assert.equal(diagnostics.invalidItems, 1);
-    assert.ok(diagnostics.invalidReasons?.[0]?.includes("no mNNNNN refs in header"));
+    assert.ok(diagnostics.invalidReasons?.[0]?.includes("no mNNNNN/bN refs in header"));
+});
+
+test("line form: header matches on the first line only — body ref citations cannot hijack the range", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: [
+            "## Auth exploration\nFound token in m00042. Decisions made:\n- chose X because Y",
+            "Explored the range m00150–m00220 earlier.\nSummary body here",
+            "m00007–m00009 real header\ncites m00065 and m00150–m00220 in the body",
+        ],
+    });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(diagnostics.invalidItems, 2);
+    assert.ok(diagnostics.invalidReasons?.every((r) => r.includes("no mNNNNN/bN refs in header")));
+    assert.equal(ranges[0]!.startRef, "m00007");
+    assert.equal(ranges[0]!.endRef, "m00009");
+    assert.equal(ranges[0]!.summary, "cites m00065 and m00150–m00220 in the body");
+});
+
+test("line form: CRLF header line parses; trailing \\r trimmed from topic", () => {
+    const { ranges } = parseCompressArgs({ content: ["m00001–m00005 crlf topic\r\nbody line"] });
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.topic, "crlf topic");
+    assert.equal(ranges[0]!.summary, "body line");
 });

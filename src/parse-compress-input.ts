@@ -269,9 +269,11 @@ type EntryOutcome = { range: CompressRangeSpec } | { reason: string };
 // Line-form entries (non-strict-tool providers): each entry is ONE string —
 // first line "m00150–m00220 optional topic", remaining lines the markdown
 // summary verbatim. No object shell, no per-range JSON escaping; the only
-// hard requirement is refs at the entry head.
-const REF_PAIR_IN_LINE = /\b([mb]\d{1,7})\s*(?:[-\u2013\u2014~]|\.\.\.|to)\s*([mb]\d{1,7})\b/i;
-const SINGLE_REF_IN_LINE = /\b([mb]\d{1,7})\b/i;
+// hard requirement is refs at the START of the first line. Both patterns are
+// anchored (^): summaries cite mNNNNN/bN refs routinely, so an unanchored
+// scan would let a citation inside a headerless entry supply fake bounds.
+const REF_PAIR_IN_LINE = /^([mb]\d{1,7})\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*([mb]\d{1,7})\b/i;
+const SINGLE_REF_IN_LINE = /^([mb]\d{1,7})\b/i;
 
 function normalizeLineRef(raw: string): string {
     const lower = raw.toLowerCase();
@@ -280,11 +282,9 @@ function normalizeLineRef(raw: string): string {
 }
 
 function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome {
-    // Refs are structural only on the entry's first line: scanning into the
-    // summary body lets a cited ref pair (summaries routinely cite ranges)
-    // hijack the range and silently truncate the summary.
-    const firstNewline = entry.indexOf("\n");
-    const head = entry.slice(0, firstNewline === -1 ? 240 : Math.min(firstNewline, 240));
+    const nl = entry.indexOf("\n");
+    const head = (nl === -1 ? entry : entry.slice(0, nl)).trim();
+    const summary = (nl === -1 ? "" : entry.slice(nl + 1)).trim();
     const pair = REF_PAIR_IN_LINE.exec(head);
     let startRef: string;
     let endRef: string;
@@ -295,15 +295,13 @@ function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome
         afterRefs = pair.index + pair[0].length;
     } else {
         const single = SINGLE_REF_IN_LINE.exec(head);
-        if (single === null) return { reason: "line entry: no mNNNNN refs in header" };
+        if (single === null) return { reason: "line entry: no mNNNNN/bN refs in header" };
         startRef = normalizeLineRef(single[1]!);
         endRef = startRef;
         afterRefs = single.index + single[0].length;
     }
-    const lineEnd = entry.indexOf("\n", afterRefs);
-    const explicitTopic = (lineEnd === -1 ? entry.slice(afterRefs) : entry.slice(afterRefs, lineEnd)).trim();
-    const summary = (lineEnd === -1 ? "" : entry.slice(lineEnd + 1)).trim();
     if (summary.length === 0) return { reason: "line entry: missing summary after the refs header line" };
+    const explicitTopic = head.slice(afterRefs).trim();
     const range: CompressRangeSpec = {
         startRef,
         endRef,
@@ -331,7 +329,7 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
  *  arrays of strings are the primary line-form transport. */
 function splitLineEntries(content: string): unknown[] {
     const parts = content
-        .split(/\n(?=[mb]\d{1,7}\s*(?:[-\u2013\u2014~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
+        .split(/\n(?=[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
         .map((p) => p.trim())
         .filter((p) => p.length > 0);
     return parts.length > 0 ? parts : [content.trim()];
