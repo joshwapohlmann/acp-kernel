@@ -35,7 +35,7 @@ export const ACP_DECOMPRESS_CLOSE = "</acp_decompress>";
 export const COMPRESS_TOOL = {
   name: COMPRESS_TOOL_NAME,
   description:
-    "Replace a contiguous range of older conversation with a detailed summary you write. Use when content is genuinely consumed. Batch form: content=[{startId,endId,summary,topic?}]. REQUIRED — compress without content is invalid.",
+    "Replace consumed conversation ranges with self-contained summaries you write, identified by their refs. Line form (preferred): content = one STRING per range — first line 'm00150–m00220 optional topic', remaining lines the markdown summary written verbatim (no JSON structure, no escaping). Legacy object form {startId,endId,summary,topic?} also accepted. Use when content is genuinely consumed. REQUIRED — compress without content is invalid.",
   input_schema: {
     type: "object",
     properties: {
@@ -46,25 +46,34 @@ export const COMPRESS_TOOL = {
       content: {
         type: "array",
         description:
-          "One or more ranges to compress into separate summary blocks",
+          "One or more ranges to compress into separate summary blocks. Line form (preferred): one string per range — first line 'm00150–m00220 optional topic', remaining lines the markdown summary verbatim. Object form also accepted.",
         items: {
-          type: "object",
-          properties: {
-            topic: { type: "string" },
-            startId: {
+          anyOf: [
+            {
               type: "string",
-              description: "mNNNNN ref at the start of the range",
+              description:
+                "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
             },
-            endId: {
-              type: "string",
-              description: "mNNNNN ref at the end of the range",
+            {
+              type: "object",
+              properties: {
+                topic: { type: "string" },
+                startId: {
+                  type: "string",
+                  description: "mNNNNN ref at the start of the range",
+                },
+                endId: {
+                  type: "string",
+                  description: "mNNNNN ref at the end of the range",
+                },
+                summary: {
+                  type: "string",
+                  description: "Self-contained summary replacing the range",
+                },
+              },
+              required: ["startId", "endId", "summary"],
             },
-            summary: {
-              type: "string",
-              description: "Self-contained summary replacing the range",
-            },
-          },
-          required: ["startId", "endId", "summary"],
+          ],
         },
       },
     },
@@ -161,25 +170,34 @@ export const COMPRESS_TOOL_OPENAI = {
         content: {
           type: "array",
           description:
-            "One or more ranges to compress into separate summary blocks. REQUIRED — compress without content is invalid.",
+            "One or more ranges to compress into separate summary blocks. Line form (preferred): one string per range — first line 'm00150–m00220 optional topic', remaining lines the markdown summary verbatim. Object form also accepted. REQUIRED — compress without content is invalid.",
           items: {
-            type: "object",
-            properties: {
-              topic: { type: "string" },
-              startId: {
+            anyOf: [
+              {
                 type: "string",
-                description: "mNNNNN ref at the start of the range",
+                description:
+                  "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
               },
-              endId: {
-                type: "string",
-                description: "mNNNNN ref at the end of the range",
+              {
+                type: "object",
+                properties: {
+                  topic: { type: "string" },
+                  startId: {
+                    type: "string",
+                    description: "mNNNNN ref at the start of the range",
+                  },
+                  endId: {
+                    type: "string",
+                    description: "mNNNNN ref at the end of the range",
+                  },
+                  summary: {
+                    type: "string",
+                    description: "Self-contained summary replacing the range",
+                  },
+                },
+                required: ["startId", "endId", "summary"],
               },
-              summary: {
-                type: "string",
-                description: "Self-contained summary replacing the range",
-              },
-            },
-            required: ["startId", "endId", "summary"],
+            ],
           },
         },
       },

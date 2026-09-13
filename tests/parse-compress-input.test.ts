@@ -331,7 +331,7 @@ test("parseCompressArgs reports per-entry invalid reasons", () => {
     assert.deepEqual(diagnostics.invalidReasons, [
         "entry 1: missing range bounds (need startRef/startId and endRef/endId)",
         "entry 2: missing summary",
-        "entry 3: not an object",
+        "entry 3: line entry: no mNNNNN/bN refs in header",
     ]);
 });
 
@@ -556,4 +556,178 @@ test("parseCompressArgs applies a top-level summaryMaxChars to ranges without th
     });
     assert.equal(ranges[0]!.summaryMaxChars, 5000);
     assert.equal(ranges[1]!.summaryMaxChars, 999);
+});
+
+// --- line-form entries (#non-strict-tool providers) ------------------------
+
+test("line form: array of strings — refs header, optional topic, verbatim markdown summary", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: [
+            "m00150–m00220 debug part 1\n## Fixed the loop\nbody with | pipes | and \"quotes\" and \\backslashes\\",
+            "m00300-m00350\nplain summary without heading",
+        ],
+    });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 2);
+    assert.equal(ranges[0]!.startRef, "m00150");
+    assert.equal(ranges[0]!.endRef, "m00220");
+    assert.equal(ranges[0]!.topic, "debug part 1");
+    assert.equal(ranges[0]!.summary, '## Fixed the loop\nbody with | pipes | and "quotes" and \\backslashes\\');
+    assert.equal(ranges[1]!.startRef, "m00300");
+    assert.equal(ranges[1]!.endRef, "m00350");
+    assert.equal(ranges[1]!.topic, "plain summary without heading");
+});
+
+test("line form: topic derived from first markdown heading, else first line, truncated to 60", () => {
+    const { ranges } = parseCompressArgs({
+        content: [
+            "m00010–m00020\n## The Heading Wins\ndetail",
+            "m00030–m00040\nfirst plain line is the topic\nmore",
+            "m00050–m00060\n" + "x".repeat(80) + "\ntail",
+        ],
+    });
+    assert.equal(ranges[0]!.topic, "The Heading Wins");
+    assert.equal(ranges[1]!.topic, "first plain line is the topic");
+    assert.equal(ranges[2]!.topic!.length, 60);
+});
+
+test("line form: mixed with legacy object entries — each validated independently", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: [
+            "m00001–m00002\nstring entry summary",
+            { startId: "m00003", endId: "m00004", summary: "object entry", topic: "Obj" },
+            "no refs here at all\nsummary",
+            { startId: "m00005" },
+        ],
+    });
+    assert.equal(ranges.length, 2);
+    assert.equal(diagnostics.invalidItems, 2);
+    assert.equal(ranges[0]!.summary, "string entry summary");
+    assert.equal(ranges[1]!.topic, "Obj");
+});
+
+test("line form: single string entry (header + summary) and single bare-ref entry", () => {
+    const a = parseCompressArgs({ content: ["m00007—m00009\nsummary here"] });
+    assert.equal(a.ranges.length, 1);
+    assert.equal(a.ranges[0]!.startRef, "m00007");
+    assert.equal(a.ranges[0]!.endRef, "m00009");
+    const b = parseCompressArgs({ content: ["m00042 lone ref line\nsummary"] });
+    assert.equal(b.ranges[0]!.startRef, "m00042");
+    assert.equal(b.ranges[0]!.endRef, "m00042");
+});
+
+test("line form: all spec separators — tilde, to, unicode ellipsis, three dots", () => {
+    for (const header of ["m00150~m00220", "m00150 to m00220", "m00150…m00220", "m00150...m00220"]) {
+        const { ranges, diagnostics } = parseCompressArgs({ content: [`${header}\nsum`] });
+        assert.equal(diagnostics.kind, "ok", `separator in ${JSON.stringify(header)}`);
+        assert.equal(ranges[0]!.startRef, "m00150", `separator in ${JSON.stringify(header)}`);
+        assert.equal(ranges[0]!.endRef, "m00220", `separator in ${JSON.stringify(header)}`);
+    }
+});
+
+test("line form: header line with no summary after it is dropped, others survive", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: [
+            "m00001–m00005 topic\nfirst summary",
+            "m00010–m00012",
+        ],
+    });
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.summary, "first summary");
+    assert.equal(diagnostics.invalidItems, 1);
+    assert.ok(diagnostics.invalidReasons?.[0]?.includes("missing summary"));
+});
+
+test("line form: bare string content (not JSON) splits on ref-pair header lines", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: "m00100–m00110 part A\n## A\nsummary A\nm00200–m00220 part B\nsummary B",
+    });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 2);
+    assert.equal(ranges[0]!.topic, "part A");
+    assert.equal(ranges[0]!.summary, "## A\nsummary A");
+    assert.equal(ranges[1]!.summary, "summary B");
+});
+
+test("line form: stringified array of line-form strings salvages through the string path", () => {
+    const { ranges } = parseCompressArgs(
+        JSON.stringify({ content: ["m00111–m00122\nsum one", "m00333–m00344 t2\nsum two"] }),
+    );
+    assert.equal(ranges.length, 2);
+    assert.equal(ranges[0]!.summary, "sum one");
+    assert.equal(ranges[1]!.topic, "t2");
+});
+
+test("line form: an empty string entry is invalid, not a crash", () => {
+    const { ranges, diagnostics } = parseCompressArgs({ content: ["", "m00001–m00002\nok"] });
+    assert.equal(ranges.length, 1);
+    assert.equal(diagnostics.invalidItems, 1);
+});
+
+test("line form: bN block refs (multi-tier folds) with short ids", () => {
+    const { ranges } = parseCompressArgs({
+        content: ["b3–b15 tier fold\n## Folded\nsummary of blocks", "b2 lone block\nsummary"],
+    });
+    assert.equal(ranges.length, 2);
+    assert.equal(ranges[0]!.startRef, "b3");
+    assert.equal(ranges[0]!.endRef, "b15");
+    assert.equal(ranges[1]!.startRef, "b2");
+    assert.equal(ranges[1]!.endRef, "b2");
+});
+
+test("line form: m refs zero-pad like the object form", () => {
+    const { ranges } = parseCompressArgs({ content: ["m150–m220 pad\nsummary"] });
+    assert.equal(ranges[0]!.startRef, "m00150");
+    assert.equal(ranges[0]!.endRef, "m00220");
+});
+
+test("line form: refs cited inside the summary body never become the range", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: ["m00042 lone ref line\nEarlier I compressed m00300–m00400 for the auth work.\nDetails here."],
+    });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.startRef, "m00042");
+    assert.equal(ranges[0]!.endRef, "m00042");
+    assert.equal(
+        ranges[0]!.summary,
+        "Earlier I compressed m00300–m00400 for the auth work.\nDetails here.",
+    );
+});
+
+test("line form: entry whose first line has no refs is dropped, not salvaged from later lines", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: [
+            "Summary of work\nm00150–m00220 were discussed before\nmore detail",
+            "m00001–m00002 ok entry\nfine",
+        ],
+    });
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.startRef, "m00001");
+    assert.equal(diagnostics.invalidItems, 1);
+    assert.ok(diagnostics.invalidReasons?.[0]?.includes("no mNNNNN/bN refs in header"));
+});
+
+test("line form: header matches on the first line only — body ref citations cannot hijack the range", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: [
+            "## Auth exploration\nFound token in m00042. Decisions made:\n- chose X because Y",
+            "Explored the range m00150–m00220 earlier.\nSummary body here",
+            "m00007–m00009 real header\ncites m00065 and m00150–m00220 in the body",
+        ],
+    });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(diagnostics.invalidItems, 2);
+    assert.ok(diagnostics.invalidReasons?.every((r) => r.includes("no mNNNNN/bN refs in header")));
+    assert.equal(ranges[0]!.startRef, "m00007");
+    assert.equal(ranges[0]!.endRef, "m00009");
+    assert.equal(ranges[0]!.summary, "cites m00065 and m00150–m00220 in the body");
+});
+
+test("line form: CRLF header line parses; trailing \\r trimmed from topic", () => {
+    const { ranges } = parseCompressArgs({ content: ["m00001–m00005 crlf topic\r\nbody line"] });
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.topic, "crlf topic");
+    assert.equal(ranges[0]!.summary, "body line");
 });

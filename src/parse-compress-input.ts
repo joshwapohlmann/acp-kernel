@@ -165,7 +165,17 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
         // Stringified content array: vLLM-style gateways stringify nested
         // arrays, so `content` arrives as a JSON string of the array.
         const parsed = parseContentArray(content);
-        if (parsed === null) {
+        if (parsed === null || (parsed.entries.length === 0 && content.trim().length > 0)) {
+            // Not a JSON array (or nothing salvageable): bare line-form text.
+            // Split on ref-pair header lines and treat each as a string entry.
+            const entries = splitLineEntries(content);
+            const { ranges, invalid, reasons } = validateEntries(entries, callId);
+            if (ranges.length > 0) {
+                diag.invalidItems = invalid;
+                if (reasons.length > 0) diag.invalidReasons = reasons;
+                diag.kind = "ok";
+                return finish(ranges, diag);
+            }
             diag.kind = "content-not-array";
             return finish([], diag);
         }
@@ -256,7 +266,77 @@ function validateEntries(entries: unknown[], callId: string | undefined): { rang
 
 type EntryOutcome = { range: CompressRangeSpec } | { reason: string };
 
+// Line-form entries (non-strict-tool providers): each entry is ONE string —
+// first line "m00150–m00220 optional topic", remaining lines the markdown
+// summary verbatim. No object shell, no per-range JSON escaping; the only
+// hard requirement is refs at the START of the first line. Both patterns are
+// anchored (^): summaries cite mNNNNN/bN refs routinely, so an unanchored
+// scan would let a citation inside a headerless entry supply fake bounds.
+const REF_PAIR_IN_LINE = /^([mb]\d{1,7})\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*([mb]\d{1,7})\b/i;
+const SINGLE_REF_IN_LINE = /^([mb]\d{1,7})\b/i;
+
+function normalizeLineRef(raw: string): string {
+    const lower = raw.toLowerCase();
+    const digits = lower.slice(1);
+    return lower[0]! === "b" ? `b${digits}` : `m${digits.padStart(5, "0")}`;
+}
+
+function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome {
+    const nl = entry.indexOf("\n");
+    const head = (nl === -1 ? entry : entry.slice(0, nl)).trim();
+    const summary = (nl === -1 ? "" : entry.slice(nl + 1)).trim();
+    const pair = REF_PAIR_IN_LINE.exec(head);
+    let startRef: string;
+    let endRef: string;
+    let afterRefs: number;
+    if (pair !== null) {
+        startRef = normalizeLineRef(pair[1]!);
+        endRef = normalizeLineRef(pair[2]!);
+        afterRefs = pair.index + pair[0].length;
+    } else {
+        const single = SINGLE_REF_IN_LINE.exec(head);
+        if (single === null) return { reason: "line entry: no mNNNNN/bN refs in header" };
+        startRef = normalizeLineRef(single[1]!);
+        endRef = startRef;
+        afterRefs = single.index + single[0].length;
+    }
+    if (summary.length === 0) return { reason: "line entry: missing summary after the refs header line" };
+    const explicitTopic = head.slice(afterRefs).trim();
+    const range: CompressRangeSpec = {
+        startRef,
+        endRef,
+        summary,
+        topic: explicitTopic.length > 0 ? explicitTopic : deriveTopicFromSummary(summary),
+    };
+    if (callId !== undefined) range.compressCallId = callId;
+    return { range };
+}
+
+/** Display/retrieval label for line-form entries without an explicit topic:
+ *  the summary's first markdown heading, else its first non-empty line,
+ *  truncated. The topic is metadata (panels, T2 source headers, search) —
+ *  never load-bearing for correctness. */
+export function deriveTopicFromSummary(summary: string): string | undefined {
+    const heading = /^#{1,6}\s+(.+)$/m.exec(summary);
+    const source = heading !== null ? heading[1]! : (summary.split("\n").find((l) => l.trim().length > 0) ?? "");
+    const text = source.trim().replace(/^[\u2022\-*]\s+/, "");
+    if (text.length === 0) return undefined;
+    return text.length > 60 ? text.slice(0, 60).trimEnd() : text;
+}
+
+/** Split a bare string content (not a JSON array) into line-form entries: a
+ *  line that starts a ref pair begins a new entry. Fallback path only —
+ *  arrays of strings are the primary line-form transport. */
+function splitLineEntries(content: string): unknown[] {
+    const parts = content
+        .split(/\n(?=[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+    return parts.length > 0 ? parts : [content.trim()];
+}
+
 function validateEntry(entry: unknown, callId: string | undefined): EntryOutcome {
+    if (typeof entry === "string") return parseLineEntry(entry, callId);
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return { reason: "not an object" };
     const e = entry as Record<string, unknown>;
     // Field-name variants: startRef/endRef are canonical; startId/endId is
