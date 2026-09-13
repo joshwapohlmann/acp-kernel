@@ -109,9 +109,18 @@ export interface AbsorbConfig {
   excludeTools: string[];
 }
 
+/** Persistent acp_rule feature (see rules.ts). Absent/disabled = feature off;
+ *  the tool is not registered/injected. Limits fall back to DEFAULT_RULE_LIMITS. */
+export interface RuleFeatureConfig {
+  enabled?: boolean;
+  maxRules?: number;
+  maxRuleChars?: number;
+}
+
 /** One persistent rule/reminder recorded via the acp_rule tool. Rules live in
- *  session state (never compressed) and are re-injected into the system prompt
- *  every turn by the adapter. */
+ *  session state; their tool call/result pairs are hard-protected from
+ *  compression (see protected.ts), so the reminder stays in context. No system
+ *  prompt involvement — the tool call itself is the durable record. */
 export interface RuleRecord {
   /** Stable id ("rule-1", "rule-2", ...), unique among current rules. */
   id: string;
@@ -211,6 +220,8 @@ export interface Config {
   modelContextLimit: number;
   /** Instant tool-result absorption (see absorb.ts). Absent/disabled = feature off. */
   absorb?: AbsorbConfig;
+  /** Persistent acp_rule reminders (see rules.ts). Absent/disabled = feature off. */
+  rules?: RuleFeatureConfig;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
 }
 

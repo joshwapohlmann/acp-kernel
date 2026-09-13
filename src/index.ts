@@ -137,14 +137,19 @@ export type {
 } from "./absorb.js";
 export {
   RULE_TOOL_NAME,
+  RULE_TOOL_DESCRIPTION,
+  RULE_TOOL,
+  RULE_TOOL_OPENAI,
+  RULE_TOOL_RESPONSES,
   DEFAULT_RULE_LIMITS,
+  rulesEnabled,
+  resolveRuleLimits,
   listRules,
   allocateRuleId,
   addRule,
   removeRule,
   clearRules,
-  formatRulesForPrompt,
-  RULES_USAGE_PROMPT,
+  formatRulesList,
 } from "./rules.js";
 export type { RuleLimits, AddRuleResult } from "./rules.js";
 export { rebuildCompressionState } from "./rebuild.js";

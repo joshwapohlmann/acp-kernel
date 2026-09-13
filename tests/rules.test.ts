@@ -7,14 +7,19 @@ import { defaultConfig } from "../src/config.js";
 import type { Config, CoreMessage } from "../src/types.js";
 import {
   RULE_TOOL_NAME,
+  RULE_TOOL_DESCRIPTION,
+  RULE_TOOL,
+  RULE_TOOL_OPENAI,
+  RULE_TOOL_RESPONSES,
   DEFAULT_RULE_LIMITS,
+  rulesEnabled,
+  resolveRuleLimits,
   listRules,
   allocateRuleId,
   addRule,
   removeRule,
   clearRules,
-  formatRulesForPrompt,
-  RULES_USAGE_PROMPT,
+  formatRulesList,
 } from "../src/rules.js";
 
 test("addRule records a rule and allocates sequential ids", () => {
@@ -88,20 +93,45 @@ test("clearRules empties the list and returns the count", () => {
   assert.deepEqual(listRules(state), []);
 });
 
-test("formatRulesForPrompt renders numbered rules or empty string", () => {
-  assert.equal(formatRulesForPrompt([]), "");
-  const text = formatRulesForPrompt([
+test("formatRulesList renders numbered rules or empty string", () => {
+  assert.equal(formatRulesList([]), "");
+  const text = formatRulesList([
     { id: "rule-1", text: "first" },
     { id: "rule-2", text: "second" },
   ]);
-  assert.match(text, /Recorded rules/);
+  assert.match(text, /Recorded rules \(2\)/);
   assert.match(text, /^1\. first$/m);
   assert.match(text, /^2\. second$/m);
 });
 
-test("RULES_USAGE_PROMPT instructs on what to record and brevity", () => {
-  assert.match(RULES_USAGE_PROMPT, /acp_rule/);
-  assert.match(RULES_USAGE_PROMPT, /SHORT/i);
+test("tool description carries usage guidance (no system prompt involved)", () => {
+  assert.match(RULE_TOOL_DESCRIPTION, /survives? context compression/);
+  assert.match(RULE_TOOL_DESCRIPTION, /list recorded rules/);
+});
+
+test("wire schemas are well-formed for all three protocols", () => {
+  assert.equal(RULE_TOOL.name, RULE_TOOL_NAME);
+  assert.equal(RULE_TOOL.input_schema.type, "object");
+  assert.equal(
+    RULE_TOOL.input_schema.properties.rule.type,
+    "string",
+  );
+  assert.equal(RULE_TOOL_OPENAI.type, "function");
+  assert.equal(RULE_TOOL_OPENAI.function.name, RULE_TOOL_NAME);
+  assert.equal(RULE_TOOL_OPENAI.function.parameters, RULE_TOOL.input_schema);
+  assert.equal(RULE_TOOL_RESPONSES.type, "function");
+  assert.equal(RULE_TOOL_RESPONSES.name, RULE_TOOL_NAME);
+});
+
+test("rulesEnabled and resolveRuleLimits honor Config.rules with defaults", () => {
+  assert.equal(rulesEnabled({}), false);
+  assert.equal(rulesEnabled({ rules: {} }), false);
+  assert.equal(rulesEnabled({ rules: { enabled: true } }), true);
+  assert.deepEqual(resolveRuleLimits({}), DEFAULT_RULE_LIMITS);
+  assert.deepEqual(resolveRuleLimits({ rules: { maxRules: 5 } }), {
+    maxRules: 5,
+    maxRuleChars: 300,
+  });
 });
 
 test("rules survive on legacy states lacking the rules field", () => {
@@ -134,7 +164,7 @@ test("acp_rule tool-call and tool-result are excluded from compression ranges by
   const core = createCore();
   const messages: CoreMessage[] = [
     msg("a", longText),
-    toolCall("b", RULE_TOOL_NAME, "call1", '{"action":"add","rule":"remember X"}'),
+    toolCall("b", RULE_TOOL_NAME, "call1", '{"rule":"remember X"}'),
     toolResult("c", "call1", "recorded rule-1"),
     msg("d", longText),
   ];
