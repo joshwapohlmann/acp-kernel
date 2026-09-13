@@ -78,6 +78,7 @@ export {
   sanitizePackSurface,
   defaultPack,
   leanPack,
+  LEAN_HOW_TO_COMPRESS,
   builtinSource,
   createDirPackSource,
   createPackResolver,

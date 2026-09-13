@@ -8,6 +8,7 @@ import {
   sanitizePackSurface,
   defaultPack,
   leanPack,
+  LEAN_HOW_TO_COMPRESS,
   builtinSource,
   createDirPackSource,
   createPackResolver,
@@ -79,6 +80,7 @@ test("lean carries a condensed how-to-compress style contract in the pi slot", (
   // #265: summariesInContext is a compact trust guardrail now, not null
   assert.equal(typeof pi.promptSections.summariesInContext, "string", "compact guardrail retained");
   assert.equal(pi.promptSections.philosophy, null, "philosophy stays dropped (howToCompress is the operative contract)");
+  assert.equal(pi.promptSections.howToCompress, LEAN_HOW_TO_COMPRESS, "pi slot is the exported LEAN_HOW_TO_COMPRESS constant");
 });
 
 test("lean acpTags carries BOTH the summary-trust guardrail and the post-compress verification ban (#272 + #265)", () => {

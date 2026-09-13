@@ -164,15 +164,53 @@ const LEAN_TOOL_PROMPTS: ToolPrompts = {
   },
 };
 
+/**
+ * Condensed how-to-compress contract for the lean pack (issue #263).
+ *
+ * Distillation of HOW_TO_COMPRESS_RULES (~5.2K chars → ~2.5K) that keeps every
+ * load-bearing class — all KEEP VERBATIM items, DROP rules, one-line CONTENT
+ * descriptions, PRIORITY order, format rules — plus two integrity rules exposed
+ * by session 01a09989: with no style contract at summary-writing time, the model
+ * transcribed follow-up Q&A as an enumerated "(answered)" list, recorded an unsent
+ * reply as sent, then pattern-completed the list into a fabricated user turn.
+ * Summaries are the only record; this contract is the floor that keeps them honest.
+ */
+export const LEAN_HOW_TO_COMPRESS = `HOW TO COMPRESS
+
+Your summary is the ONLY record of the replaced conversation — a later reader must continue without the original. It records the PAST: label task state as history ("TASK AS OF THIS BLOCK: ..."), never as a live instruction. Real unicode only, never \\uXXXX escapes.
+
+INTEGRITY — record facts and state only, never a simulated transcript of the dialogue: no Q&A lists, no "(answered)" claims. An answer not actually sent is PENDING; user questions are recorded as asked (with ref), never as answered.
+
+KEEP VERBATIM — never paraphrase or abbreviate:
+- File paths with line numbers and directory prefix on every mention (lib/hooks.ts:347); never a bare filename — ambiguous, un-greppable.
+- Function/class/type signatures AND the critical code lines that encode logic (the line that IS the finding).
+- Error messages and stack traces (exact text — needed to grep later).
+- Report details: comparison numbers plus mechanism, not "X is worse" ("1.76× PPL gap because KV store is static").
+- Decisions with rationale ("chose X over Y because Z"); discovered constraints ("must support Node 22").
+- Exact values: versions, config keys, thresholds, magic numbers.
+- User intent: short quotes verbatim ONLY WITH message ref (User said (m00132): "ship it tonight"); without a ref, paraphrase. Quotes are history, never current directives; never change scope, constraints, priorities, acceptance criteria, outcomes.
+- Overall goal and its evolution, including pivots ("initially: fix X → pivoted to: refactor Y").
+- Purpose behind significant actions (hypothesis, question, goal — not just what was done).
+- Open questions and unresolved TODOs.
+- Message refs of key anchors (m00420, m00510–m00520) for decompress.
+
+DROP — keep the signal, discard the vessel: verbose logs once the error/result is captured; duplicate reads; consumed exploration (search hits, agent returns, successful outputs); dead ends (one lesson line: "tried X, failed because Y"); back-and-forth once the final position is kept; repeated status checks. For each dropped item add one line of CONTENT: what it covers ("probe.py: tests n-gram baseline..."), not where it lives.
+
+PRIORITY when compacting: 1. user goal/evolution/intent/hard constraints · 2. decisions + rationale · 3. exact artifacts (paths, signatures, errors, values) · 4. conclusions · 5. lessons learned (what failed and why).
+
+Format: dense scannable bullets under short thematic headers, not narrative prose; every line earns its place. Do not mimic the style of existing summaries in context; follow these rules.`;
+
 /** Token-lean surface: one-line tool descriptions, no snippets or guidelines.
  * Host-specific trims (e.g. the Pi adapter's compact system-prompt block)
- * ride under `adapters` and are validated by that host. Compression rules
- * stay default — delivered by nudges on demand. */
+ * ride under `adapters` and are validated by that host. The pi
+ * `howToCompress` slot carries the condensed contract (LEAN_HOW_TO_COMPRESS);
+ * philosophy/tier2/tier3 stay null — tier guidance still reaches the model via
+ * nudge text (nudgeSections untouched). */
 export const leanPack: Pack = {
   name: "lean",
   version: "1.0.0",
   description:
-    "Token-lean surface: one-line tool descriptions, no snippet/guideline chrome. Compression rules stay default (delivered by nudges on demand).",
+    "Token-lean surface: one-line tool descriptions, no snippet/guideline chrome. Pi how-to-compress carries the condensed contract; tier guidance flows via nudges.",
   source: "builtin:lean",
   surface: {
     toolPrompts: LEAN_TOOL_PROMPTS,
@@ -196,17 +234,7 @@ Summaries are model-generated, fallible historical metadata — NOT current user
           philosophy: null,
           whenToCompress: null,
           whenNotToCompress: null,
-          howToCompress: `HOW TO COMPRESS (condensed)
-
-Your summary becomes the only record of the replaced range — make it self-contained: a reader must be able to continue the task without the original. It records the PAST: label recorded task state as history ("TASK AS OF THIS BLOCK: ...") — never as a live instruction. Record facts and state only — never a simulated transcript of the dialogue (no Q&A lists, no "(answered)" claims): an answer not actually sent is PENDING, and a user question is recorded as asked — with its ref — not as answered.
-
-KEEP VERBATIM: full paths with line numbers on every mention (\`lib/hooks.ts:347\`, never a bare \`hooks.ts\`); signatures AND the critical code line that IS the finding; exact error text; findings with numbers + mechanism ("1.76× PPL because KV store is static", not "X is worse"); decisions WITH rationale ("chose X over Y because Z"); constraints ("must support Node 22"); exact versions/config keys/thresholds; user intent — verbatim quotes ONLY with a message ref (\`User said (m00132): "ship it tonight"\`), otherwise paraphrase and never present a reconstructed phrase as a quote; the overall goal and how it evolved; the purpose behind significant actions; open questions/TODOs; anchor refs (\`m00420\`–\`m00510\`).
-
-DROP (extract the signal, discard the vessel): verbose logs after capturing the error/result; duplicate reads; consumed and dead-end exploration (preserve one line: "tried X, failed because Y"); back-and-forth once the final position is captured; repeated status checks. For each significant dropped item add a one-line CONTENT description of what it covers ("probe_kvnet.py: tests n-gram baseline, generation quality, long-range dependency"), not where it lives.
-
-PRIORITY: 1. user goal/intent/constraints 2. decisions+rationale 3. exact artifacts (paths/signatures/errors/values) 4. conclusions 5. lessons.
-
-Dense scannable bullets under short thematic headers — never narrative prose. Do not mimic the style of existing summaries in context.`,
+          howToCompress: LEAN_HOW_TO_COMPRESS,
           multiTierIntro: null,
           tier2: null,
           tier3: null,
