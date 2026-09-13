@@ -167,8 +167,11 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
         const parsed = parseContentArray(content);
         if (parsed === null || (parsed.entries.length === 0 && content.trim().length > 0)) {
             // Not a JSON array (or nothing salvageable): bare line-form text.
-            // Split on ref-pair header lines and treat each as a string entry.
-            const entries = splitLineEntries(content);
+            // Strip JSON-wrapper residue (stringified ["…"] with broken
+            // escaping) — the line form needs structure only in the refs
+            // header line, so the summary body never has to parse.
+            const bare = stripJsonWrapperResidue(content);
+            const entries = splitLineEntries(bare);
             const { ranges, invalid, reasons } = validateEntries(entries, callId);
             if (ranges.length > 0) {
                 diag.invalidItems = invalid;
@@ -325,14 +328,31 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
 }
 
 /** Split a bare string content (not a JSON array) into line-form entries: a
- *  line that starts a ref pair begins a new entry. Fallback path only —
- *  arrays of strings are the primary line-form transport. */
+ *  line that starts a ref pair begins a new entry. The split lookahead
+ *  tolerates stringified-element residue (the previous element's closing
+ *  quote, the separating comma, the next element's opening quote) before the
+ *  next refs header — batch payloads that lost their JSON escaping still split
+ *  on their headers. Fallback path only — arrays of strings are the primary
+ *  line-form transport. */
 function splitLineEntries(content: string): unknown[] {
     const parts = content
-        .split(/\n(?=[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
-        .map((p) => p.trim())
+        .split(/\n(?=\s*(?:["']\s*,\s*)?["']?\s*[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
+        .map((p) => p.trim().replace(/^(?:["']\s*,?\s*)+/, "").replace(/["']\s*$/, ""))
         .filter((p) => p.length > 0);
     return parts.length > 0 ? parts : [content.trim()];
+}
+
+// Remove the leftover shell of a stringified-but-unescaped array/element:
+// leading [ and a quote, trailing ] and a quote. Salvage-context only — it
+// runs after JSON.parse has already failed, so these chars are residue, not
+// content. Anything deeper and the line form stops being the right tool.
+function stripJsonWrapperResidue(s: string): string {
+    let t = s.trim();
+    if (t.startsWith("[")) t = t.replace(/^\[+\s*/, "");
+    t = t.replace(/^"/, "");
+    if (t.endsWith("]")) t = t.replace(/\s*\]+$/, "");
+    t = t.replace(/"$/, "");
+    return t.trim();
 }
 
 function validateEntry(entry: unknown, callId: string | undefined): EntryOutcome {
@@ -383,6 +403,18 @@ function tryParseLenient(s: string): unknown {
     if (fixed !== noTrailingCommas) {
         try {
             return JSON.parse(fixed);
+        } catch {
+            // fall through to salvage
+        }
+    }
+    // Unescaped inner quotes and markdown backslash escapes (\`, \-) defeat
+    // the string state machines above; the parser's own error position
+    // pinpoints the real offending characters. Repair exactly where it says
+    // and iterate.
+    const ctrlFixed = repairAtParserPositions(noTrailingCommas);
+    if (ctrlFixed !== noTrailingCommas) {
+        try {
+            return JSON.parse(ctrlFixed);
         } catch {
             // fall through to salvage
         }
@@ -532,6 +564,51 @@ function escapeRawNewlinesInStrings(s: string): string {
         out += ch;
     }
     return out;
+}
+
+// Repair control characters and invalid escapes exactly where JSON.parse
+// reports them. Each iteration fixes the single offending char at the
+// parser's stated position — \n/\r/\t/\u00XX for control chars (position =
+// the char), doubling the backslash for bad escapes like \` (position = the
+// char AFTER the backslash, so the value keeps it literally) — and retries;
+// stops when the parse passes or the error is neither class. Uses the
+// parser's own view of string state, so unescaped inner quotes and markdown
+// backslashes — which defeat the hand-rolled state machines — cannot mislead
+// it. Compound damage (raw newlines AND \` escapes in one string) needs
+// several rounds; the cap bounds pathological loops.
+function repairAtParserPositions(s: string): string {
+    let cur = s;
+    for (let i = 0; i < 500; i++) {
+        let err: unknown;
+        try {
+            JSON.parse(cur);
+            return cur;
+        } catch (e) {
+            err = e;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        const posMatch = /position (\d+)/.exec(msg);
+        if (posMatch === null) return cur;
+        const pos = Number(posMatch[1]);
+        if (!Number.isInteger(pos) || pos < 0 || pos >= cur.length) return cur;
+        if (/control character/i.test(msg)) {
+            const ch = cur.charAt(pos);
+            let esc: string | undefined;
+            if (ch === "\n") esc = "\\n";
+            else if (ch === "\r") esc = "\\r";
+            else if (ch === "\t") esc = "\\t";
+            else if (ch.charCodeAt(0) < 32) esc = "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+            if (esc === undefined) return cur;
+            cur = cur.slice(0, pos) + esc + cur.slice(pos + 1);
+        } else if (/Bad escaped character/i.test(msg)) {
+            const b = cur.charAt(pos - 1) === "\\" ? pos - 1 : cur.charAt(pos) === "\\" ? pos : -1;
+            if (b < 0) return cur;
+            cur = cur.slice(0, b) + "\\\\" + cur.slice(b + 1);
+        } else {
+            return cur;
+        }
+    }
+    return cur;
 }
 
 // Unbalanced brackets or an unterminated string at end of input is the
