@@ -167,8 +167,11 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
         const parsed = parseContentArray(content);
         if (parsed === null || (parsed.entries.length === 0 && content.trim().length > 0)) {
             // Not a JSON array (or nothing salvageable): bare line-form text.
-            // Split on ref-pair header lines and treat each as a string entry.
-            const entries = splitLineEntries(content);
+            // Strip JSON-wrapper residue (stringified ["…"] with broken
+            // escaping) — the line form needs structure only in the refs
+            // header line, so the summary body never has to parse.
+            const bare = stripJsonWrapperResidue(content);
+            const entries = splitLineEntries(bare);
             const { ranges, invalid, reasons } = validateEntries(entries, callId);
             if (ranges.length > 0) {
                 diag.invalidItems = invalid;
@@ -325,14 +328,30 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
 }
 
 /** Split a bare string content (not a JSON array) into line-form entries: a
- *  line that starts a ref pair begins a new entry. Fallback path only —
- *  arrays of strings are the primary line-form transport. */
+ *  line that starts a ref pair begins a new entry. The split lookahead
+ *  tolerates stringified-element residue (a closing quote, a comma) before
+ *  the next refs header — batch payloads that lost their JSON escaping still
+ *  split on their headers. Fallback path only — arrays of strings are the
+ *  primary line-form transport. */
 function splitLineEntries(content: string): unknown[] {
     const parts = content
-        .split(/\n(?=[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
-        .map((p) => p.trim())
+        .split(/\n(?=\s*["']?\s*,?\s*[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
+        .map((p) => p.trim().replace(/^["']\s*,?\s*/, "").replace(/["']\s*$/, ""))
         .filter((p) => p.length > 0);
     return parts.length > 0 ? parts : [content.trim()];
+}
+
+// Remove the leftover shell of a stringified-but-unescaped array/element:
+// leading [ and a quote, trailing ] and a quote. Salvage-context only — it
+// runs after JSON.parse has already failed, so these chars are residue, not
+// content. Anything deeper and the line form stops being the right tool.
+function stripJsonWrapperResidue(s: string): string {
+    let t = s.trim();
+    if (t.startsWith("[")) t = t.replace(/^\[+\s*/, "");
+    t = t.replace(/^"/, "");
+    if (t.endsWith("]")) t = t.replace(/\s*\]+$/, "");
+    t = t.replace(/"$/, "");
+    return t.trim();
 }
 
 function validateEntry(entry: unknown, callId: string | undefined): EntryOutcome {

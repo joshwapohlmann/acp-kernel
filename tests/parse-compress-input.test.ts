@@ -746,12 +746,23 @@ test("parseCompressArgs: raw newlines plus invalid escapes in one stringified li
     assert.ok(out.ranges[0]!.summary.includes("(`src/config.ts` quoted `path`)"), out.ranges[0]!.summary.slice(0, 80));
 });
 
-test("parseCompressArgs: unescaped inner quotes before the newline remain unrecovered (boundary)", () => {
-    // Unexpected-token class: outside the two repairable error classes; the
-    // parser never invents structure, so this stays a clean failure.
-    const content = '[{"startId":"m00002","endId":"m00007","summary":"user said "fix it" now\nsecond line"}]';
+test("parseCompressArgs: stringified line-form with unescaped inner quotes recovers via wrapper-strip fallback", () => {
+    // Unexpected-token class kills both JSON repair paths, but the line form
+    // needs structure only in the header line: strip the [" "] residue and
+    // the rest is prose. (#270 follow-up)
+    const content = '["m00002–m00007 session recap\nuser said "fix it" now\nsecond line"]';
     const out = parseCompressArgs({ content });
-    assert.notEqual(out.diagnostics.ok, true);
+    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
+    assert.equal(out.ranges[0]!.startRef, "m00002");
+    assert.ok(out.ranges[0]!.summary.includes('said "fix it"'), out.ranges[0]!.summary);
+});
+
+test("parseCompressArgs: batch stringified line-form with broken escaping splits on header lines", () => {
+    const content = '["m00001–m00002 first topic\nsummary one", "m00003–m00004 second topic\nsummary two"]';
+    const out = parseCompressArgs({ content });
+    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
+    assert.deepEqual(out.ranges.map((r) => `${r.startRef}-${r.endRef}`), ["m00001-m00002", "m00003-m00004"]);
+    assert.equal(out.ranges[1]!.summary, "summary two");
 });
 
 test("parseCompressArgs: multiple raw control chars at scattered positions are all repaired", () => {
