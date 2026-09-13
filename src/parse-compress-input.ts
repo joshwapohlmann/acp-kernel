@@ -387,7 +387,56 @@ function tryParseLenient(s: string): unknown {
             // fall through to salvage
         }
     }
+    // Compound damage (raw control chars + invalid escapes together) defeats
+    // every single-purpose pass above; drive the repair from the parser's own
+    // position reports instead of a hand-rolled string-state machine.
+    return repairByParserPosition(noTrailingCommas);
+}
+
+// Repair the two V8 error classes carrying an actionable position, using the
+// parser as oracle. Each pass fixes the leftmost remaining damaged spot, so
+// progress is monotonic and the loop bounds at s.length + 1 passes. Any other
+// error class returns undefined → caller falls through to salvage unchanged.
+function repairByParserPosition(s: string): unknown {
+    let cur = s;
+    for (let i = 0; i <= cur.length; i++) {
+        try {
+            return JSON.parse(cur);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            const posMatch = /position (\d+)/.exec(msg);
+            if (posMatch === null) return undefined;
+            const pos = Number(posMatch[1]);
+            if (/Bad control character/.test(msg)) {
+                const cp = cur.codePointAt(pos);
+                if (cp === undefined) return undefined;
+                const adv = cp > 0xffff ? 2 : 1;
+                cur = cur.slice(0, pos) + escapeControlChar(cp) + cur.slice(pos + adv);
+            } else if (/Bad escaped character/.test(msg)) {
+                // N points at the char after the backslash; double it so `\X`
+                // becomes `\\X` (parses to a literal backslash + X).
+                if (pos < 1 || cur.charAt(pos - 1) !== "\\") return undefined;
+                cur = cur.slice(0, pos - 1) + "\\" + cur.slice(pos - 1);
+            } else {
+                return undefined;
+            }
+        }
+    }
     return undefined;
+}
+
+// Map a raw control char to a valid JSON escape; unknowns use \uXXXX so the
+// result is always valid (a bare backslash before an arbitrary control char
+// would itself be a bad escape).
+function escapeControlChar(cp: number): string {
+    switch (cp) {
+        case 0x08: return "\\b";
+        case 0x09: return "\\t";
+        case 0x0a: return "\\n";
+        case 0x0c: return "\\f";
+        case 0x0d: return "\\r";
+        default: return "\\u" + cp.toString(16).padStart(4, "0");
+    }
 }
 
 // State machine that converts single-quoted strings to double-quoted ones.
