@@ -103,12 +103,22 @@ function collectVisible(
     return { visible, summaryTokens };
 }
 
+/** Host-declared surface facts for status reports. The kernel never resolves
+ *  packs — which pack is active is host policy (billion-context #730); the
+ *  kernel only renders what the host declares about the active surface. */
+export interface StatusReportMeta {
+    pack?: string;
+    packVersion?: string;
+    host?: string;
+}
+
 export interface StatusReportOptions {
     scope?: "compressed" | "uncompressed";
     view?: "ranges" | "messages";
     tool?: string;
     sort?: "size" | "time" | "tool" | "age";
     limit?: number;
+    meta?: StatusReportMeta;
 }
 
 export function buildStatusReport(
@@ -128,7 +138,7 @@ export function buildStatusReport(
         .sort((a, b) => numericPart(a.blockId) - numericPart(b.blockId));
 
     if (scope === "compressed") {
-        return renderCompressedDrilldown(activeBlocks, state, sort, limit, countTokens);
+        return renderCompressedDrilldown(activeBlocks, state, sort, limit, countTokens, options.meta);
     }
 
     const { visible, summaryTokens } = collectVisible(messages, state, countTokens);
@@ -140,7 +150,16 @@ export function buildStatusReport(
         return renderUncompressedRanges(visible);
     }
 
-    return renderOverview(visible, summaryTokens, activeBlocks, state, countTokens, limit);
+    return renderOverview(visible, summaryTokens, activeBlocks, state, countTokens, limit, options.meta);
+}
+
+function surfaceLine(meta: StatusReportMeta | undefined): string | null {
+    if (!meta) return null;
+    const parts: string[] = [];
+    if (meta.pack) parts.push(`pack=${meta.pack}${meta.packVersion ? ` v${meta.packVersion}` : ""}`);
+    if (meta.host) parts.push(`host=${meta.host}`);
+    if (parts.length === 0) return null;
+    return `ACTIVE SURFACE: ${parts.join(" | ")}`;
 }
 
 function renderOverview(
@@ -150,8 +169,11 @@ function renderOverview(
     state: CompressionState,
     countTokens: (t: string) => number,
     limit: number,
+    meta: StatusReportMeta | undefined,
 ): string {
     const lines: string[] = [];
+    const surface = surfaceLine(meta);
+    if (surface) lines.push(surface);
     const toolTypeMap = new Map<string, number>();
     for (const message of visible) {
         toolTypeMap.set(message.tool, (toolTypeMap.get(message.tool) ?? 0) + message.tokens);
@@ -303,6 +325,7 @@ function renderCompressedDrilldown(
     sort: string,
     limit: number,
     countTokens: (t: string) => number,
+    meta: StatusReportMeta | undefined,
 ): string {
     let sorted = [...blocks];
     if (sort === "time") sorted.sort((a, b) => a.createdAt - b.createdAt);
@@ -323,6 +346,8 @@ function renderCompressedDrilldown(
     const lines = [
         `COMPRESSED — ${sorted.length} blocks | ${formatTokens(totalEffective)} original → ${formatTokens(totalSummary)} summary`,
     ];
+    const surface = surfaceLine(meta);
+    if (surface) lines.push(surface);
     const breakdown = tierBreakdown(sorted, countTokens);
     if (breakdown) lines.push(`Tier usage: ${breakdown}`);
     lines.push("");
