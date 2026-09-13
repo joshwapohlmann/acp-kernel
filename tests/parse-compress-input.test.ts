@@ -731,3 +731,39 @@ test("line form: CRLF header line parses; trailing \\r trimmed from topic", () =
     assert.equal(ranges[0]!.topic, "crlf topic");
     assert.equal(ranges[0]!.summary, "body line");
 });
+
+// #271: production shape (session 01a09a0b) — line-form array stringified
+// WITHOUT escaping: raw newlines AND markdown \` escapes in one string.
+// The string-state repair fixes the newlines, the parser-position repair
+// fixes the bad escapes; both must land for the range to recover.
+test("parseCompressArgs: raw newlines plus invalid escapes in one stringified line-form entry are repaired", () => {
+    const content = "[\"m00066\u2013m00081 Investigation reads: exact pre-edit code\n\n## Files to modify (\`src/config.ts\` quoted \`path\`) tail\"]";
+    const out = parseCompressArgs({ content });
+    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
+    assert.equal(out.ranges.length, 1);
+    assert.equal(out.ranges[0]!.startRef, "m00066");
+    assert.equal(out.ranges[0]!.endRef, "m00081");
+    assert.ok(out.ranges[0]!.summary.includes("(`src/config.ts` quoted `path`)"), out.ranges[0]!.summary.slice(0, 80));
+});
+
+test("parseCompressArgs: unescaped inner quotes before the newline remain unrecovered (boundary)", () => {
+    // Unexpected-token class: outside the two repairable error classes; the
+    // parser never invents structure, so this stays a clean failure.
+    const content = '[{"startId":"m00002","endId":"m00007","summary":"user said "fix it" now\nsecond line"}]';
+    const out = parseCompressArgs({ content });
+    assert.notEqual(out.diagnostics.ok, true);
+});
+
+test("parseCompressArgs: multiple raw control chars at scattered positions are all repaired", () => {
+    const content = '[{"startId":"m00010","endId":"m00012","summary":"a\nb\tc\rd"}]';
+    const out = parseCompressArgs({ content });
+    assert.equal(out.diagnostics.ok, true);
+    assert.equal(out.ranges[0]!.summary, "a\nb\tc\rd");
+});
+
+test("parseCompressArgs: valid JSON and non-control-char garbage are untouched by the new repair", () => {
+    const valid = parseCompressArgs({ content: '[{"startId":"m00010","endId":"m00012","summary":"s"}]' });
+    assert.equal(valid.diagnostics.ok, true);
+    const structurally = parseCompressArgs({ content: '[{"startId": "m00010", "endId"]' });
+    assert.notEqual(structurally.diagnostics.kind, "ok");
+});

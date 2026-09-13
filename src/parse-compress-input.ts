@@ -387,6 +387,18 @@ function tryParseLenient(s: string): unknown {
             // fall through to salvage
         }
     }
+    // Unescaped inner quotes and markdown backslash escapes (\`, \-) defeat
+    // the string state machines above; the parser's own error position
+    // pinpoints the real offending characters. Repair exactly where it says
+    // and iterate.
+    const ctrlFixed = repairAtParserPositions(noTrailingCommas);
+    if (ctrlFixed !== noTrailingCommas) {
+        try {
+            return JSON.parse(ctrlFixed);
+        } catch {
+            // fall through to salvage
+        }
+    }
     return undefined;
 }
 
@@ -532,6 +544,51 @@ function escapeRawNewlinesInStrings(s: string): string {
         out += ch;
     }
     return out;
+}
+
+// Repair control characters and invalid escapes exactly where JSON.parse
+// reports them. Each iteration fixes the single offending char at the
+// parser's stated position — \n/\r/\t/\u00XX for control chars (position =
+// the char), doubling the backslash for bad escapes like \` (position = the
+// char AFTER the backslash, so the value keeps it literally) — and retries;
+// stops when the parse passes or the error is neither class. Uses the
+// parser's own view of string state, so unescaped inner quotes and markdown
+// backslashes — which defeat the hand-rolled state machines — cannot mislead
+// it. Compound damage (raw newlines AND \` escapes in one string) needs
+// several rounds; the cap bounds pathological loops.
+function repairAtParserPositions(s: string): string {
+    let cur = s;
+    for (let i = 0; i < 500; i++) {
+        let err: unknown;
+        try {
+            JSON.parse(cur);
+            return cur;
+        } catch (e) {
+            err = e;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        const posMatch = /position (\d+)/.exec(msg);
+        if (posMatch === null) return cur;
+        const pos = Number(posMatch[1]);
+        if (!Number.isInteger(pos) || pos < 0 || pos >= cur.length) return cur;
+        if (/control character/i.test(msg)) {
+            const ch = cur.charAt(pos);
+            let esc: string | undefined;
+            if (ch === "\n") esc = "\\n";
+            else if (ch === "\r") esc = "\\r";
+            else if (ch === "\t") esc = "\\t";
+            else if (ch.charCodeAt(0) < 32) esc = "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+            if (esc === undefined) return cur;
+            cur = cur.slice(0, pos) + esc + cur.slice(pos + 1);
+        } else if (/Bad escaped character/i.test(msg)) {
+            const b = cur.charAt(pos - 1) === "\\" ? pos - 1 : cur.charAt(pos) === "\\" ? pos : -1;
+            if (b < 0) return cur;
+            cur = cur.slice(0, b) + "\\\\" + cur.slice(b + 1);
+        } else {
+            return cur;
+        }
+    }
+    return cur;
 }
 
 // Unbalanced brackets or an unterminated string at end of input is the
