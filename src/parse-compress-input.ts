@@ -280,7 +280,11 @@ function normalizeLineRef(raw: string): string {
 }
 
 function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome {
-    const head = entry.slice(0, 240);
+    // Refs are structural only on the entry's first line: scanning into the
+    // summary body lets a cited ref pair (summaries routinely cite ranges)
+    // hijack the range and silently truncate the summary.
+    const firstNewline = entry.indexOf("\n");
+    const head = entry.slice(0, firstNewline === -1 ? 240 : Math.min(firstNewline, 240));
     const pair = REF_PAIR_IN_LINE.exec(head);
     let startRef: string;
     let endRef: string;

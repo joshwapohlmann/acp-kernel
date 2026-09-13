@@ -671,3 +671,30 @@ test("line form: m refs zero-pad like the object form", () => {
     assert.equal(ranges[0]!.startRef, "m00150");
     assert.equal(ranges[0]!.endRef, "m00220");
 });
+
+test("line form: refs cited inside the summary body never become the range", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: ["m00042 lone ref line\nEarlier I compressed m00300–m00400 for the auth work.\nDetails here."],
+    });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.startRef, "m00042");
+    assert.equal(ranges[0]!.endRef, "m00042");
+    assert.equal(
+        ranges[0]!.summary,
+        "Earlier I compressed m00300–m00400 for the auth work.\nDetails here.",
+    );
+});
+
+test("line form: entry whose first line has no refs is dropped, not salvaged from later lines", () => {
+    const { ranges, diagnostics } = parseCompressArgs({
+        content: [
+            "Summary of work\nm00150–m00220 were discussed before\nmore detail",
+            "m00001–m00002 ok entry\nfine",
+        ],
+    });
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.startRef, "m00001");
+    assert.equal(diagnostics.invalidItems, 1);
+    assert.ok(diagnostics.invalidReasons?.[0]?.includes("no mNNNNN refs in header"));
+});
