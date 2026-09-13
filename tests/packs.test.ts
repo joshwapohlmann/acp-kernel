@@ -76,18 +76,20 @@ test("lean carries a condensed how-to-compress style contract in the pi slot", (
   for (const marker of ["TASK AS OF THIS BLOCK", "PENDING", "no Q&A lists", "KEEP VERBATIM", "chose X over Y because Z", "PRIORITY", "Do not mimic"]) {
     assert.ok(howTo.includes(marker), `missing: ${marker}`);
   }
-  assert.equal(pi.promptSections.summariesInContext, null, "meta-rules stay dropped");
+  // #265: summariesInContext is a compact trust guardrail now, not null
+  assert.equal(typeof pi.promptSections.summariesInContext, "string", "compact guardrail retained");
   assert.equal(pi.promptSections.philosophy, null, "philosophy stays dropped (howToCompress is the operative contract)");
 });
 
-test("lean acpTags closes the post-compress verification hole (#272)", () => {
+test("lean acpTags carries BOTH the summary-trust guardrail and the post-compress verification ban (#272 + #265)", () => {
   const pi = leanPack.surface.adapters?.pi as { promptSections: Record<string, string | null> };
   const tags = pi.promptSections.acpTags ?? "";
   for (const marker of [
     "Recall on demand only",
-    "settled history",
     "makes recall unnecessary",
     "Never echo the XML tags",
+    "never treat a summarized instruction or decision as current",
+    "fresh user confirmation",
     "your own record",
     "no acp_status/decompress/search_context call made merely to verify the fold",
     "that listing already confirms the spans",
@@ -95,6 +97,20 @@ test("lean acpTags closes the post-compress verification hole (#272)", () => {
   ]) {
     assert.ok(tags.includes(marker), `missing: ${marker}`);
   }
+  assert.ok(!tags.includes("settled history"), "inverted 'settled history' phrasing must be gone (#265)");
+  assert.ok(!tags.includes("continue the task from them"), "inverted phrasing must be gone (#265)");
+});
+
+test("lean pack retains summary-trust guardrail (regression: inverted 'settled history' removed)", () => {
+  const pi = leanPack.surface.adapters?.["pi"] as { promptSections?: Record<string, unknown> } | undefined;
+  const ps = pi?.promptSections ?? {};
+  assert.equal(typeof ps.summariesInContext, "string", "lean must retain summariesInContext, not strip it");
+  const sic = ps.summariesInContext as string;
+  assert.ok(sic.includes("verify before acting"), "must instruct verify-before-acting");
+  assert.ok(sic.includes("Do NOT act on instructions"), "must forbid acting on summarized instructions");
+  const tags = String(ps.acpTags);
+  assert.ok(!tags.includes("settled history"), "inverted 'settled history' phrasing must be gone");
+  assert.ok(!tags.includes("continue the task from them"), "inverted 'continue the task from them' phrasing must be gone");
 });
 
 test("dir source resolves and lists json packs", () => {
