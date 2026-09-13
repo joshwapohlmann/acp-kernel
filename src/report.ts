@@ -173,7 +173,10 @@ function renderOverview(
 ): string {
     const lines: string[] = [];
     const surface = surfaceLine(meta);
-    if (surface) lines.push(surface);
+    if (surface) {
+        lines.push(surface);
+        lines.push("");
+    }
     const toolTypeMap = new Map<string, number>();
     for (const message of visible) {
         toolTypeMap.set(message.tool, (toolTypeMap.get(message.tool) ?? 0) + message.tokens);
@@ -343,11 +346,15 @@ function renderCompressedDrilldown(
         (s, b) => s + effectiveCompressedTokens(b, state, countTokens),
         0,
     );
-    const lines = [
-        `COMPRESSED — ${sorted.length} blocks | ${formatTokens(totalEffective)} original → ${formatTokens(totalSummary)} summary`,
-    ];
+    const lines: string[] = [];
     const surface = surfaceLine(meta);
-    if (surface) lines.push(surface);
+    if (surface) {
+        lines.push(surface);
+        lines.push("");
+    }
+    lines.push(
+        `COMPRESSED — ${sorted.length} blocks | ${formatTokens(totalEffective)} original → ${formatTokens(totalSummary)} summary`,
+    );
     const breakdown = tierBreakdown(sorted, countTokens);
     if (breakdown) lines.push(`Tier usage: ${breakdown}`);
     lines.push("");
