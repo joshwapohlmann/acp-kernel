@@ -36,12 +36,14 @@ function stateWithBlock(): ReturnType<typeof createInitialState> {
 
 const noMeta = buildStatusReport(createInitialState(), messages, defaultCountTokens);
 
-test("overview renders the ACTIVE SURFACE line when meta is declared", () => {
+test("overview renders a leading ACTIVE SURFACE line when meta is declared", () => {
     const report = buildStatusReport(createInitialState(), messages, defaultCountTokens, {
         meta: { pack: "lean", packVersion: "3", host: "billion-context-pi 0.1.69" },
     });
-    const line = report.split("\n").find((l) => l.startsWith("ACTIVE SURFACE:"));
-    assert.equal(line, "ACTIVE SURFACE: pack=lean v3 | host=billion-context-pi 0.1.69");
+    const lines = report.split("\n");
+    assert.equal(lines[0], "ACTIVE SURFACE: pack=lean v3 | host=billion-context-pi 0.1.69");
+    assert.equal(lines[1], "");
+    assert.equal(lines[2], "CONTEXT BREAKDOWN");
 });
 
 test("overview stays byte-identical when no meta is passed", () => {
@@ -71,12 +73,29 @@ test("empty meta object renders nothing", () => {
     assert.equal(report, noMeta);
 });
 
-test("compressed drilldown also carries the surface line", () => {
+test("compressed drilldown renders a leading ACTIVE SURFACE line", () => {
     const state = stateWithBlock();
     const report = buildStatusReport(state, messages, defaultCountTokens, {
         scope: "compressed",
         meta: { pack: "lean", packVersion: "3" },
     });
-    const line = report.split("\n").find((l) => l.startsWith("ACTIVE SURFACE:"));
-    assert.equal(line, "ACTIVE SURFACE: pack=lean v3");
+    const lines = report.split("\n");
+    assert.equal(lines[0], "ACTIVE SURFACE: pack=lean v3");
+    assert.equal(lines[1], "");
+    assert.ok((lines[2] ?? "").startsWith("COMPRESSED — 1 blocks"));
+});
+
+test("uncompressed views never get the surface line", () => {
+    const state = stateWithBlock();
+    const options = [
+        { scope: "uncompressed" as const },
+        { scope: "uncompressed" as const, view: "messages" as const },
+    ];
+    for (const o of options) {
+        const report = buildStatusReport(state, messages, defaultCountTokens, {
+            ...o,
+            meta: { pack: "lean", packVersion: "3", host: "billion-context" },
+        });
+        assert.ok(!report.includes("ACTIVE SURFACE"));
+    }
 });
