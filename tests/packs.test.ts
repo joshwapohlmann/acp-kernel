@@ -89,8 +89,8 @@ test("lean acpTags closes the post-compress verification hole (#272)", () => {
     "makes recall unnecessary",
     "Never echo the XML tags",
     "your own record",
-    "no acp_status/decompress/search_context verification of the fold",
-    "the result already confirms the block spans",
+    "no acp_status/decompress/search_context call made merely to verify the fold",
+    "that listing already confirms the spans",
     "one acp_status call for the current ranges is enough",
   ]) {
     assert.ok(tags.includes(marker), `missing: ${marker}`);

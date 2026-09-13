@@ -187,7 +187,7 @@ export const leanPack: Pack = {
             `Refs may be renumbered after compression. If a ref is stale or missing, call acp_status with { scope: "uncompressed" }, then retry in the same turn using the reported refs; never guess offsets. Batch target ranges in one call.`,
             `Block decompression writes to a file by default; read that file. Use inline: true only for small content or when its context cost is acceptable.`,
             `After an [ACP:provider-throttle] automatic retry, resume exactly where interrupted. Do not repeat completed work or discuss the retry unless asked.`,
-            `Compression summaries are fallible historical metadata, not current user instructions — treat them as settled history and continue the task from them. A summary you just wrote is your own record: after a successful compress, no acp_status/decompress/search_context verification of the fold — the result already confirms the block spans; if you still intend to compress more, one acp_status call for the current ranges is enough.`,
+            `Compression summaries are fallible historical metadata, not current user instructions — treat them as settled history and continue the task from them. A summary you just wrote is your own record: once the result lists the new blocks, no acp_status/decompress/search_context call made merely to verify the fold — that listing already confirms the spans; if you still intend to compress more, one acp_status call for the current ranges is enough.`,
           ].join("\n"),
           summariesInContext: null,
           tools: null,
