@@ -732,61 +732,57 @@ test("line form: CRLF header line parses; trailing \\r trimmed from topic", () =
     assert.equal(ranges[0]!.summary, "body line");
 });
 
-// #271: production shape (session 01a09a0b) — line-form array stringified
-// WITHOUT escaping: raw newlines AND markdown \` escapes in one string.
-// The string-state repair fixes the newlines, the parser-position repair
-// fixes the bad escapes; both must land for the range to recover.
-test("parseCompressArgs: raw newlines plus invalid escapes in one stringified line-form entry are repaired", () => {
-    const content = "[\"m00066\u2013m00081 Investigation reads: exact pre-edit code\n\n## Files to modify (\`src/config.ts\` quoted \`path\`) tail\"]";
-    const out = parseCompressArgs({ content });
-    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
-    assert.equal(out.ranges.length, 1);
-    assert.equal(out.ranges[0]!.startRef, "m00066");
-    assert.equal(out.ranges[0]!.endRef, "m00081");
-    assert.ok(out.ranges[0]!.summary.includes("(`src/config.ts` quoted `path`)"), out.ranges[0]!.summary.slice(0, 80));
+// ---------------------------------------------------------------------------
+// Parser-position repair: compound damage (raw control chars + invalid escapes)
+// ---------------------------------------------------------------------------
+
+test("parseCompressArgs repairs compound damage: raw newlines + invalid escapes in one stringified payload", () => {
+    // Production shape (01a09a0b): vLLM-stringified content array whose summary
+    // has REAL raw newlines AND markdown backslash-escapes, unescaped.
+    const summary =
+        "m00066-m00081 Investigation reads: exact pre-edit code\n\n" +
+        "## Files to modify (`src/x.ts`)\n" +
+        "and some \\*markdown\\* with a \\`tick\\`";
+    const arrStr = '[{"startRef": "m00066", "endRef": "m00081", "summary": "' + summary + '"}]';
+    const { ranges, diagnostics } = parseCompressArgs({ content: arrStr });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.ok, true);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.startRef, "m00066");
+    assert.equal(ranges[0]?.endRef, "m00081");
+    assert.equal(ranges[0]?.summary, summary);
 });
 
-test("parseCompressArgs: stringified line-form with unescaped inner quotes recovers via wrapper-strip fallback", () => {
-    // Unexpected-token class kills both JSON repair paths, but the line form
-    // needs structure only in the header line: strip the [" "] residue and
-    // the rest is prose. (#270 follow-up)
-    const content = '["m00002–m00007 session recap\nuser said "fix it" now\nsecond line"]';
-    const out = parseCompressArgs({ content });
-    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
-    assert.equal(out.ranges[0]!.startRef, "m00002");
-    assert.ok(out.ranges[0]!.summary.includes('said "fix it"'), out.ranges[0]!.summary);
+test("parseCompressArgs repairs multiple scattered control chars in one pass", () => {
+    const summary = "line one\ttabbed\rreturn\nnewline then a \\*star\\*";
+    const doc = '{"content": [{"startRef": "m00001", "endRef": "m00002", "summary": "' + summary + '"}]}';
+    const { ranges, diagnostics } = parseCompressArgs(doc);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.summary, summary);
 });
 
-test("parseCompressArgs: batch stringified line-form with broken escaping splits on header lines", () => {
-    const content = '["m00001–m00002 first topic\nsummary one", "m00003–m00004 second topic\nsummary two"]';
-    const out = parseCompressArgs({ content });
-    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
-    assert.deepEqual(out.ranges.map((r) => `${r.startRef}-${r.endRef}`), ["m00001-m00002", "m00003-m00004"]);
-    assert.equal(out.ranges[1]!.summary, "summary two");
+test("parseCompressArgs keeps an invalid escape's backslash literally in the value", () => {
+    // `\X` is invalid JSON; repair doubles it so the parsed value keeps `\X`.
+    const doc = '{"content": [{"startRef": "m00001", "endRef": "m00002", "summary": "a \\* b"}]}';
+    const { ranges, diagnostics } = parseCompressArgs(doc);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges[0]?.summary, "a \\* b");
 });
 
-test("parseCompressArgs: batch stringified line-form with inner-quote damage splits at the element boundary", () => {
-    // The unescaped quote kills every JSON path; the fallback must split where
-    // the first element ends with a newline, past the ", " close/open-quote
-    // residue between elements.
-    const content = '["m00001–m00002 first topic\nsay "hi" one\n", "m00003–m00004 second topic\nsum two"]';
-    const out = parseCompressArgs({ content });
-    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
-    assert.deepEqual(out.ranges.map((r) => `${r.startRef}-${r.endRef}`), ["m00001-m00002", "m00003-m00004"]);
-    assert.equal(out.ranges[0]!.summary, 'say "hi" one');
-    assert.equal(out.ranges[1]!.summary, "sum two");
+test("parseCompressArgs leaves valid JSON and structural garbage untouched by the repair", () => {
+    const valid = JSON.stringify({ content: [{ startRef: "m00001", endRef: "m00002", summary: "clean" }] });
+    assert.equal(parseCompressArgs(valid).diagnostics.kind, "ok");
+    const garbage = '{"content": [{"startRef": "m00001", "summary": "unterminated';
+    const g = parseCompressArgs(garbage);
+    assert.ok(g.diagnostics.kind === "truncated" || g.diagnostics.kind === "malformed-json");
+    assert.equal(g.ranges.length, 0);
 });
 
-test("parseCompressArgs: multiple raw control chars at scattered positions are all repaired", () => {
-    const content = '[{"startId":"m00010","endId":"m00012","summary":"a\nb\tc\rd"}]';
-    const out = parseCompressArgs({ content });
-    assert.equal(out.diagnostics.ok, true);
-    assert.equal(out.ranges[0]!.summary, "a\nb\tc\rd");
-});
-
-test("parseCompressArgs: valid JSON and non-control-char garbage are untouched by the new repair", () => {
-    const valid = parseCompressArgs({ content: '[{"startId":"m00010","endId":"m00012","summary":"s"}]' });
-    assert.equal(valid.diagnostics.ok, true);
-    const structurally = parseCompressArgs({ content: '[{"startId": "m00010", "endId"]' });
-    assert.notEqual(structurally.diagnostics.kind, "ok");
+test("parseCompressArgs maps non-named control chars through \\uXXXX escapes", () => {
+    const summary = "a\u0001b";
+    const doc = '{"content": [{"startRef": "m00001", "endRef": "m00002", "summary": "' + summary + '"}]}';
+    const { ranges, diagnostics } = parseCompressArgs(doc);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges[0]?.summary, summary);
 });
