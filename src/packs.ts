@@ -192,6 +192,7 @@ export const leanPack: Pack = {
           summariesInContext: null,
           tools: null,
           philosophy: null,
+          howToCompress: null,
           whenToCompress: null,
           whenNotToCompress: null,
           howToCompress: `HOW TO COMPRESS (condensed)
