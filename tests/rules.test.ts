@@ -185,3 +185,33 @@ test("rules: acp_rule calls and results are hard-excluded from compression witho
   assert.ok(block.effectiveMessageIds.includes("a"), "regular msg 'a' in effective coverage");
   assert.ok(block.effectiveMessageIds.includes("d"), "regular msg 'd' in effective coverage");
 });
+
+test("rules: survive processTurn and applyCompression; ids are never re-issued", () => {
+  const core = createCore();
+  const messages = [
+    msg("a", longText),
+    toolCall("b", "acp_rule", "call-rule", '{"action":"add","text":"remember X"}'),
+    toolResult("c", "call-rule", "rule recorded as rule1"),
+    msg("d", longText),
+  ];
+  let state = setupRefs(messages);
+  state = addRule(state, "always reply in Chinese").state;
+  assert.equal(state.nextRuleId, 2);
+
+  const afterTurn = core.processTurn({ messages, state, config: cfg(), tokenCount: 100 }).state;
+  assert.deepEqual(listRules(afterTurn).map((r) => r.id), ["rule1"], "rules must survive processTurn");
+  assert.equal(afterTurn.nextRuleId, 2, "counter must survive processTurn");
+
+  const afterCompress = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00004", summary: validSummary }],
+    messages,
+    state: afterTurn,
+    config: cfg(),
+  }).state;
+  assert.deepEqual(listRules(afterCompress).map((r) => r.id), ["rule1"], "rules must survive applyCompression");
+  assert.equal(afterCompress.nextRuleId, 2, "counter must survive applyCompression");
+
+  const next = addRule(afterCompress, "second rule");
+  assert.ok(next.ok);
+  assert.equal(next.rule?.id, "rule2", "id space is monotonic across turns and compressions");
+});
