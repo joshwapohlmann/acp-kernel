@@ -194,7 +194,17 @@ export const leanPack: Pack = {
           philosophy: null,
           whenToCompress: null,
           whenNotToCompress: null,
-          howToCompress: null,
+          howToCompress: `HOW TO COMPRESS (condensed)
+
+Your summary becomes the only record of the replaced range — make it self-contained: a reader must be able to continue the task without the original. It records the PAST: label recorded task state as history ("TASK AS OF THIS BLOCK: ...") — never as a live instruction. Record facts and state only — never a simulated transcript of the dialogue (no Q&A lists, no "(answered)" claims): an answer not actually sent is PENDING, and a user question is recorded as asked — with its ref — not as answered.
+
+KEEP VERBATIM: full paths with line numbers on every mention (\`lib/hooks.ts:347\`, never a bare \`hooks.ts\`); signatures AND the critical code line that IS the finding; exact error text; findings with numbers + mechanism ("1.76× PPL because KV store is static", not "X is worse"); decisions WITH rationale ("chose X over Y because Z"); constraints ("must support Node 22"); exact versions/config keys/thresholds; user intent — verbatim quotes ONLY with a message ref (\`User said (m00132): "ship it tonight"\`), otherwise paraphrase and never present a reconstructed phrase as a quote; the overall goal and how it evolved; the purpose behind significant actions; open questions/TODOs; anchor refs (\`m00420\`–\`m00510\`).
+
+DROP (extract the signal, discard the vessel): verbose logs after capturing the error/result; duplicate reads; consumed and dead-end exploration (preserve one line: "tried X, failed because Y"); back-and-forth once the final position is captured; repeated status checks. For each significant dropped item add a one-line CONTENT description of what it covers ("probe_kvnet.py: tests n-gram baseline, generation quality, long-range dependency"), not where it lives.
+
+PRIORITY: 1. user goal/intent/constraints 2. decisions+rationale 3. exact artifacts (paths/signatures/errors/values) 4. conclusions 5. lessons.
+
+Dense scannable bullets under short thematic headers — never narrative prose. Do not mimic the style of existing summaries in context.`,
           multiTierIntro: null,
           tier2: null,
           tier3: null,

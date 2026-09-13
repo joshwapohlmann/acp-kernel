@@ -69,6 +69,17 @@ test("lean pack keeps rules default, one-line tool descriptions, adapters namesp
   assert.equal(Object.keys(leanPack.surface.adapters).length, 1);
 });
 
+test("lean carries a condensed how-to-compress style contract in the pi slot", () => {
+  const pi = leanPack.surface.adapters?.pi as { promptSections: Record<string, string | null> };
+  const howTo = pi.promptSections.howToCompress ?? "";
+  assert.ok(howTo.length > 800 && howTo.length < 2600, `condensed, not full (len=${howTo.length})`);
+  for (const marker of ["TASK AS OF THIS BLOCK", "PENDING", "no Q&A lists", "KEEP VERBATIM", "chose X over Y because Z", "PRIORITY", "Do not mimic"]) {
+    assert.ok(howTo.includes(marker), `missing: ${marker}`);
+  }
+  assert.equal(pi.promptSections.summariesInContext, null, "meta-rules stay dropped");
+  assert.equal(pi.promptSections.philosophy, null, "philosophy stays dropped (howToCompress is the operative contract)");
+});
+
 test("dir source resolves and lists json packs", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "acp-packs-"));
   try {
