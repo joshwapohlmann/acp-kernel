@@ -765,6 +765,18 @@ test("parseCompressArgs: batch stringified line-form with broken escaping splits
     assert.equal(out.ranges[1]!.summary, "summary two");
 });
 
+test("parseCompressArgs: batch stringified line-form with inner-quote damage splits at the element boundary", () => {
+    // The unescaped quote kills every JSON path; the fallback must split where
+    // the first element ends with a newline, past the ", " close/open-quote
+    // residue between elements.
+    const content = '["m00001–m00002 first topic\nsay "hi" one\n", "m00003–m00004 second topic\nsum two"]';
+    const out = parseCompressArgs({ content });
+    assert.equal(out.diagnostics.ok, true, JSON.stringify(out.diagnostics));
+    assert.deepEqual(out.ranges.map((r) => `${r.startRef}-${r.endRef}`), ["m00001-m00002", "m00003-m00004"]);
+    assert.equal(out.ranges[0]!.summary, 'say "hi" one');
+    assert.equal(out.ranges[1]!.summary, "sum two");
+});
+
 test("parseCompressArgs: multiple raw control chars at scattered positions are all repaired", () => {
     const content = '[{"startId":"m00010","endId":"m00012","summary":"a\nb\tc\rd"}]';
     const out = parseCompressArgs({ content });

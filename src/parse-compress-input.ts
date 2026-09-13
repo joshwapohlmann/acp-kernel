@@ -329,14 +329,15 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
 
 /** Split a bare string content (not a JSON array) into line-form entries: a
  *  line that starts a ref pair begins a new entry. The split lookahead
- *  tolerates stringified-element residue (a closing quote, a comma) before
- *  the next refs header — batch payloads that lost their JSON escaping still
- *  split on their headers. Fallback path only — arrays of strings are the
- *  primary line-form transport. */
+ *  tolerates stringified-element residue (the previous element's closing
+ *  quote, the separating comma, the next element's opening quote) before the
+ *  next refs header — batch payloads that lost their JSON escaping still split
+ *  on their headers. Fallback path only — arrays of strings are the primary
+ *  line-form transport. */
 function splitLineEntries(content: string): unknown[] {
     const parts = content
-        .split(/\n(?=\s*["']?\s*,?\s*[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
-        .map((p) => p.trim().replace(/^["']\s*,?\s*/, "").replace(/["']\s*$/, ""))
+        .split(/\n(?=\s*(?:["']\s*,\s*)?["']?\s*[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
+        .map((p) => p.trim().replace(/^(?:["']\s*,?\s*)+/, "").replace(/["']\s*$/, ""))
         .filter((p) => p.length > 0);
     return parts.length > 0 ? parts : [content.trim()];
 }
