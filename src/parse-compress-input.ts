@@ -270,8 +270,14 @@ type EntryOutcome = { range: CompressRangeSpec } | { reason: string };
 // first line "m00150–m00220 optional topic", remaining lines the markdown
 // summary verbatim. No object shell, no per-range JSON escaping; the only
 // hard requirement is refs at the entry head.
-const REF_PAIR_IN_LINE = /\bm(\d{3,7})\s*(?:[-\u2013\u2014~]|\.\.\.|to)\s*m(\d{3,7})\b/i;
-const SINGLE_REF_IN_LINE = /\bm(\d{3,7})\b/i;
+const REF_PAIR_IN_LINE = /\b([mb]\d{1,7})\s*(?:[-\u2013\u2014~]|\.\.\.|to)\s*([mb]\d{1,7})\b/i;
+const SINGLE_REF_IN_LINE = /\b([mb]\d{1,7})\b/i;
+
+function normalizeLineRef(raw: string): string {
+    const lower = raw.toLowerCase();
+    const digits = lower.slice(1);
+    return lower[0]! === "b" ? `b${digits}` : `m${digits.padStart(5, "0")}`;
+}
 
 function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome {
     const head = entry.slice(0, 240);
@@ -280,13 +286,13 @@ function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome
     let endRef: string;
     let afterRefs: number;
     if (pair !== null) {
-        startRef = `m${pair[1]}`;
-        endRef = `m${pair[2]}`;
+        startRef = normalizeLineRef(pair[1]!);
+        endRef = normalizeLineRef(pair[2]!);
         afterRefs = pair.index + pair[0].length;
     } else {
         const single = SINGLE_REF_IN_LINE.exec(head);
         if (single === null) return { reason: "line entry: no mNNNNN refs in header" };
-        startRef = `m${single[1]}`;
+        startRef = normalizeLineRef(single[1]!);
         endRef = startRef;
         afterRefs = single.index + single[0].length;
     }
@@ -321,7 +327,7 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
  *  arrays of strings are the primary line-form transport. */
 function splitLineEntries(content: string): unknown[] {
     const parts = content
-        .split(/\n(?=m\d{3,7}\s*(?:[-\u2013\u2014~]|\.\.\.|to)\s*m\d{3,7}\b)/i)
+        .split(/\n(?=[mb]\d{1,7}\s*(?:[-\u2013\u2014~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
         .map((p) => p.trim())
         .filter((p) => p.length > 0);
     return parts.length > 0 ? parts : [content.trim()];

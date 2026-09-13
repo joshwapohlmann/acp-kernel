@@ -654,3 +654,20 @@ test("line form: an empty string entry is invalid, not a crash", () => {
     assert.equal(ranges.length, 1);
     assert.equal(diagnostics.invalidItems, 1);
 });
+
+test("line form: bN block refs (multi-tier folds) with short ids", () => {
+    const { ranges } = parseCompressArgs({
+        content: ["b3–b15 tier fold\n## Folded\nsummary of blocks", "b2 lone block\nsummary"],
+    });
+    assert.equal(ranges.length, 2);
+    assert.equal(ranges[0]!.startRef, "b3");
+    assert.equal(ranges[0]!.endRef, "b15");
+    assert.equal(ranges[1]!.startRef, "b2");
+    assert.equal(ranges[1]!.endRef, "b2");
+});
+
+test("line form: m refs zero-pad like the object form", () => {
+    const { ranges } = parseCompressArgs({ content: ["m150–m220 pad\nsummary"] });
+    assert.equal(ranges[0]!.startRef, "m00150");
+    assert.equal(ranges[0]!.endRef, "m00220");
+});
