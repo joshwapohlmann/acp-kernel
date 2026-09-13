@@ -80,6 +80,23 @@ test("lean carries a condensed how-to-compress style contract in the pi slot", (
   assert.equal(pi.promptSections.philosophy, null, "philosophy stays dropped (howToCompress is the operative contract)");
 });
 
+test("lean acpTags closes the post-compress verification hole (#272)", () => {
+  const pi = leanPack.surface.adapters?.pi as { promptSections: Record<string, string | null> };
+  const tags = pi.promptSections.acpTags ?? "";
+  for (const marker of [
+    "Recall on demand only",
+    "settled history",
+    "makes recall unnecessary",
+    "Never echo the XML tags",
+    "your own record",
+    "no acp_status/decompress/search_context call made merely to verify the fold",
+    "that listing already confirms the spans",
+    "one acp_status call for the current ranges is enough",
+  ]) {
+    assert.ok(tags.includes(marker), `missing: ${marker}`);
+  }
+});
+
 test("dir source resolves and lists json packs", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "acp-packs-"));
   try {
