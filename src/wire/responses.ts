@@ -119,6 +119,20 @@ function messageContent(content: string | ResponseContentPart[]): string {
     return typeof content === "string" ? content : content.map(partText).join("\n");
 }
 
+/** Kernel-side text for a user item: its text as given, or the "[image]"
+ *  placeholder (anthropic codec precedent) when it carries image parts but no
+ *  real text part — note ≥2 image parts join into a truthy "\n" that is not
+ *  text. SINGLE SOURCE OF TRUTH for the encode side (responsesToCore) and the
+ *  decode-side verbatim condition (coreToResponses): the two sides must agree
+ *  byte-for-byte or the raw-item round-trip silently degrades to a text-only
+ *  rebuild (#187/#291). */
+function userDisplayText(content: string | ResponseContentPart[], text: string): string {
+    if (typeof content === "string") return text;
+    const hasImage = content.some((part) => part.type === "input_image");
+    const hasTextPart = content.some((part) => part.type === "input_text" || part.type === "output_text");
+    return !text || (hasImage && !hasTextPart) ? "[image]" : text;
+}
+
 /** Extract the reasoning text from a responses reasoning item. The host
  *  carries it in `content` (reasoning_text parts); the primeFold mirror
  *  carries it in `summary` (summary_text parts). Both must yield the same
@@ -220,8 +234,17 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                             effText = split.text;
                         }
                     }
-                    if (effText) {
-                        coreId = clusters.next(deriveMessageId(role, "text", effText));
+                    // Image-only user items have no text of their own (≥2 image
+                    // parts join to a truthy "\n" — not real text). Track them
+                    // with the "[image]" placeholder so they enter the
+                    // compression space instead of vanishing from the rebuilt
+                    // input (#187/#291). displayText derives from effText
+                    // (post-split); for user items split never applies, so it
+                    // equals messageContent(content).
+                    const hasImage = Array.isArray(message.content) && message.content.some((part) => part.type === "input_image");
+                    if (effText || (role === "user" && hasImage)) {
+                        const displayText = role === "user" ? userDisplayText(message.content, effText) : effText;
+                        coreId = clusters.next(deriveMessageId(role, "text", displayText));
                         const imageUrl = Array.isArray(message.content)
                             ? message.content.find((part) => part.type === "input_image" && typeof part.image_url === "string")?.image_url
                             : undefined;
@@ -230,7 +253,7 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                             id: coreId,
                             role,
                             contentType: "text",
-                            text: effText,
+                            text: displayText,
                             rawResponsesItem: item,
                             ...(image ? { imageMediaType: image.mediaType, imageBase64: image.base64 } : {}),
                         });
@@ -406,7 +429,8 @@ export function coreToResponses(
         if (message.role === "system") {
             out.push({ type: "message", role: "developer", content: message.text ?? "" });
         } else if (message.role === "user") {
-            if (raw?.type === "message" && messageContent((raw as ResponseInputMessage).content) === (message.text ?? "")) out.push(raw);
+            const rawMessage = raw?.type === "message" ? (raw as ResponseInputMessage) : undefined;
+            if (rawMessage && userDisplayText(rawMessage.content, messageContent(rawMessage.content)) === (message.text ?? "")) out.push(rawMessage);
             else out.push({ type: "message", role: "user", content: message.text ?? "" });
         } else if (message.role === "assistant") {
             if (message.contentType === "text") {
