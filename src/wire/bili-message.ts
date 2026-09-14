@@ -42,6 +42,13 @@ export interface BiliMessage extends CoreMessage {
      *  back on subsequent requests or the API returns HTTP 400; stored so
      *  coreToOpenai can reattach it. */
     reasoningContent?: string;
+    /** OpenAI: the host's wire carried `reasoning_content` with a BLANK value.
+     *  Strict-echo thinking models (DeepSeek et al.) reject a replayed
+     *  assistant turn whose reasoning_content is MISSING but accept a blank
+     *  one, so "blank" and "absent" are different requests. openaiToCore sets
+     *  this when it found no reasoning text to store; coreToOpenai re-emits
+     *  the key (blank) instead of dropping it. */
+    reasoningPresent?: boolean;
     /** Anthropic tool_result.is_error. Marks the tool result as an error so
      *  the model knows the tool failed (not just returned an error string). */
     toolIsError?: boolean;
