@@ -427,6 +427,27 @@ test("responses: input_image with non-string image_url is tracked without sideca
     assert.deepEqual(rebuilt[0], body.input[0], "malformed item re-emitted verbatim");
 });
 
+// 6h. Empty-string input_text part + image: joining ["", ""] yields the
+//     truthy "\n" artifact, so this shape keeps "\n" as its kernel text — NOT
+//     the "[image]" placeholder. That matches pre-fix master byte-for-byte
+//     (same derived id), so the already-working shape does not churn on
+//     upgrade; switching it to "[image]" would move its id for no functional
+//     gain. Verbatim round-trip holds either way (#187/#291 review).
+test("responses: empty input_text plus image keeps its join-artifact text and stable id", () => {
+    const body: ResponsesRequestBody = {
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "" }, { type: "input_image", image_url: DATA_URL }] }],
+    };
+    const { msgs } = responsesToCore(body);
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0]?.text, "\n", "empty text part joins to the \"\\n\" artifact, not the placeholder");
+    const pureImage: ResponsesRequestBody = {
+        input: [{ type: "message", role: "user", content: [{ type: "input_image", image_url: DATA_URL }] }],
+    };
+    assert.notEqual(msgs[0]?.id, responsesToCore(pureImage).msgs[0]?.id, "distinct from the pure image-only placeholder id");
+    const rebuilt = coreToResponses(msgs);
+    assert.deepEqual(rebuilt[0], body.input[0], "verbatim round-trip holds");
+});
+
 // 7. Responses reasoning is routed into the compression pipeline (NOT the
 // opaque preamble) so the kernel hides it once its turn is summarized. The raw
 // item — including encrypted_content — round-trips verbatim via
