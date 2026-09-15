@@ -276,6 +276,28 @@ export function computeFoldEconomics(
   };
 }
 
+export function summarizeFoldEconomics(
+  foldEcon: readonly FoldEconomics[],
+): EconomicsSummary {
+  const econ: EconomicsSummary = {
+    folds: foldEcon.length,
+    grossSaved: foldEcon.reduce((n, e) => n + e.savedSoFar, 0),
+    repayCost: foldEcon.reduce((n, e) => n + e.T, 0),
+    summaryCost: foldEcon.reduce((n, e) => n + e.sigma, 0),
+    netTokens: 0,
+    paidBackCount: 0,
+    notPaidBackCount: 0,
+    unobservedCount: 0,
+  };
+  econ.netTokens = econ.grossSaved - econ.repayCost - econ.summaryCost;
+  for (const e of foldEcon) {
+    if (e.paidBack === true) econ.paidBackCount++;
+    else if (e.paidBack === false) econ.notPaidBackCount++;
+    else econ.unobservedCount++;
+  }
+  return econ;
+}
+
 export function buildCacheReport(
   samplesIn: readonly CacheSample[],
   foldsIn: readonly FoldEvent[],
@@ -394,22 +416,7 @@ export function buildCacheReport(
     );
   });
 
-  const econ: EconomicsSummary = {
-    folds: folds.length,
-    grossSaved: foldEcon.reduce((n, e) => n + e.savedSoFar, 0),
-    repayCost: foldEcon.reduce((n, e) => n + e.T, 0),
-    summaryCost: foldEcon.reduce((n, e) => n + e.sigma, 0),
-    netTokens: 0,
-    paidBackCount: 0,
-    notPaidBackCount: 0,
-    unobservedCount: 0,
-  };
-  econ.netTokens = econ.grossSaved - econ.repayCost - econ.summaryCost;
-  for (const e of foldEcon) {
-    if (e.paidBack === true) econ.paidBackCount++;
-    else if (e.paidBack === false) econ.notPaidBackCount++;
-    else econ.unobservedCount++;
-  }
+  const econ = summarizeFoldEconomics(foldEcon);
 
   return {
     generatedAt: Date.now(),

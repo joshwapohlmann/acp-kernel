@@ -121,6 +121,7 @@ export {
   computeFoldEconomics,
   decomposeSample,
   formatCacheReport,
+  summarizeFoldEconomics,
 } from "./cache-report.js";
 export type {
   CacheSample,
