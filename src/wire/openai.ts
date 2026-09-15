@@ -236,7 +236,8 @@ export function injectOpenaiSystem(messages: OpenAIMessage[], parts: string[]): 
  *  message. See conversationSignalAnthropic for the full rationale. */
 export function conversationSignalOpenai(body: OpenAIRequestBody, headerValue?: string): string {
     if (headerValue && headerValue.trim()) return headerValue.trim();
-    const firstUser = body.messages.find((m) => m.role === "user");
+    const msgs = Array.isArray(body?.messages) ? body.messages : [];
+    const firstUser = msgs.find((m) => m?.role === "user");
     const seed = firstUser ? stringContent(firstUser.content) : "default";
     return hashId(seed);
 }
