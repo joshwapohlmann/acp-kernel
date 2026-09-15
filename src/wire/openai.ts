@@ -95,7 +95,9 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                 break;
             }
             case "assistant": {
-                const fieldReasoning = typeof m.reasoning_content === "string" ? m.reasoning_content : "";
+                const rawReasoning = m.reasoning_content;
+                const fieldPresent = typeof rawReasoning === "string";
+                const fieldReasoning = fieldPresent ? rawReasoning : "";
                 let reasoning = fieldReasoning;
                 let text = stringContent(m.content);
                 if (!reasoning) {
@@ -112,6 +114,11 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                         text = split.text;
                     }
                 }
+                // Blank field, nothing inline: the host sent the key with an
+                // empty value. Record that on the cores so coreToOpenai
+                // re-emits the key instead of dropping it — strict-echo
+                // thinking models reject the key's absence, not its emptiness.
+                const blankEcho = fieldPresent && reasoning.length === 0;
                 if (reasoning) {
                     const base = deriveMessageId("assistant", "reasoning", reasoning);
                     msgs.push({
@@ -124,7 +131,7 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                 }
                 if (text) {
                     const base = deriveMessageId("assistant", "text", text);
-                    msgs.push({ id: clusters.next(base), role: "assistant", contentType: "text", text });
+                    msgs.push({ id: clusters.next(base), role: "assistant", contentType: "text", text, ...(blankEcho ? { reasoningPresent: true } : {}) });
                 }
                 if (Array.isArray(m.tool_calls)) {
                     for (const tc of m.tool_calls) {
@@ -139,6 +146,7 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                             toolName: tc.function.name,
                             toolCallId: tc.id,
                             text: tc.function.arguments ?? "",
+                            ...(blankEcho ? { reasoningPresent: true } : {}),
                         });
                         toolNames.set(tc.id, tc.function.name);
                     }
@@ -167,19 +175,23 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
 
 export function coreToOpenai(messages: BiliMessage[]): OpenAIMessage[] {
     const out: OpenAIMessage[] = [];
-    let pending: { text: string | null; toolCalls: OpenAIToolCall[]; reasoning: string | null } | null = null;
+    let pending: { text: string | null; toolCalls: OpenAIToolCall[]; reasoning: string | null; reasoningPresent: boolean } | null = null;
     const flush = () => {
         if (!pending) return;
         const reasoning = pending.reasoning !== null && pending.reasoning.length > 0 ? pending.reasoning : undefined;
+        // A blank field means the host sent the key with an empty value and
+        // expects it back: strict-echo thinking models reject its absence.
+        const reasoningField =
+            reasoning !== undefined ? { reasoning_content: reasoning } : pending.reasoningPresent ? { reasoning_content: "" } : {};
         if (pending.toolCalls.length > 0) {
             out.push({
                 role: "assistant",
                 content: pending.text ?? null,
                 tool_calls: pending.toolCalls,
-                ...(reasoning ? { reasoning_content: reasoning } : {}),
+                ...reasoningField,
             });
         } else if (pending.text !== null) {
-            out.push({ role: "assistant", content: pending.text, ...(reasoning ? { reasoning_content: reasoning } : {}) });
+            out.push({ role: "assistant", content: pending.text, ...reasoningField });
         } else if (reasoning) {
             out.push({ role: "assistant", content: null, reasoning_content: reasoning });
         }
@@ -187,7 +199,8 @@ export function coreToOpenai(messages: BiliMessage[]): OpenAIMessage[] {
     };
     for (const m of messages) {
         if (m.role === "assistant") {
-            if (!pending) pending = { text: null, toolCalls: [], reasoning: null };
+            if (!pending) pending = { text: null, toolCalls: [], reasoning: null, reasoningPresent: false };
+            if (m.reasoningPresent) pending.reasoningPresent = true;
             if (m.contentType === "reasoning") {
                 pending.reasoning = (pending.reasoning ?? "") + (m.reasoningContent ?? m.text ?? "");
             } else if (m.contentType === "text") {
