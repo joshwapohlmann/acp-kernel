@@ -109,6 +109,24 @@ export interface AbsorbConfig {
   excludeTools: string[];
 }
 
+/** Emitted when the session's irreducible floor (system prompt + block
+ *  summaries + protected zones + small uncompressible tail) exceeds
+ *  modelContextLimit: usage stayed at/above truncate.threshold for N
+ *  consecutive events while no tier could reclaim the benefit floor AND
+ *  emergency truncation saved nothing (#300). Hosts surface this ONCE (UI +
+ *  one-time model-side message) instead of repeating the emergency nudge
+ *  forever — the kernel keeps emitting it every event while the condition
+ *  holds; deduplication is the host's job. */
+export interface TerminalEscapeSignal {
+  /** Model/host-facing guidance text. */
+  message: string;
+  usage: number;
+  tokenCount: number;
+  modelContextLimit: number;
+  /** Consecutive events the terminal condition has held. */
+  stuckEvents: number;
+}
+
 export interface CompressionState {
   blocks: CompressionBlock[];
   messageRefs: MessageRefMap;
@@ -122,6 +140,12 @@ export interface CompressionState {
   stats: CompressionStats;
   /** Instant tool-result absorption records. Optional: pre-absorb persisted states lack it. */
   absorbed?: AbsorbRecord[];
+  /** Consecutive processTurn events at/above truncate.threshold where no tier
+   *  could reclaim the benefit floor AND emergency truncation saved nothing
+   *  (#300). Drives the terminalEscape signal; reset by usage dropping below
+   *  threshold, viable compression appearing, truncation savings, or a
+   *  successful applyCompression. Optional for pre-existing persisted states. */
+  terminalStreak?: number;
   nextBlockId: number;
   nextRunId: number;
 }
@@ -173,6 +197,10 @@ export interface TruncateConfig {
   // context limit. Removed GC age-deactivation/summary-truncation are gone;
   // this is the only "context near full" fallback that remains.
   threshold: number;
+  /** Consecutive processTurn events at/above threshold with no viable
+   *  compression and zero truncation savings before terminalEscape fires
+   *  (#300). Default 3. Set 0 to disable the signal. */
+  terminalEscapeAfter?: number;
 }
 
 export interface CompressValidationConfig {
@@ -309,6 +337,9 @@ export interface NudgeBreakdown {
   pendingT1: number;
   pendingT2: number;
   pendingT3: number;
+  /** Max pending across all tiers — compared against minPressureBenefit by the
+   *  emergency-truncate node to detect a terminal floor (#300). */
+  maxPending: number;
   [key: string]: number;
 }
 
@@ -335,6 +366,13 @@ export interface ProcessTurnResult {
   messages: CoreMessage[];
   state: CompressionState;
   nudge?: NudgeDecision;
+  /** Terminal floor detected (#300): compression and truncation are both
+   *  exhausted while usage stays at/above truncate.threshold. Emitted every
+   *  event while the condition holds; hosts surface it once. */
+  terminalEscape?: TerminalEscapeSignal;
+  /** Set when emergency truncation ran at/above its threshold but reclaimed
+   *  nothing — hosts should warn-log this (it was silent before, #300). */
+  truncationSkipped?: string;
 }
 
 export interface StatusReport {

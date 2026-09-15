@@ -10,6 +10,8 @@ export interface NodeEffects {
   nudge?: NudgeDecision;
   recommendation?: import("./types.js").Recommendation;
   truncatedCount?: number;
+  terminalEscape?: import("./types.js").TerminalEscapeSignal;
+  truncationSkipped?: string;
   readonly [key: string]: unknown;
 }
 
