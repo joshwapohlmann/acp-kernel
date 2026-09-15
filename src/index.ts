@@ -118,12 +118,14 @@ export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions, StatusReportMeta } from "./report.js";
 export {
   buildCacheReport,
+  computeFoldEconomics,
   decomposeSample,
   formatCacheReport,
 } from "./cache-report.js";
 export type {
   CacheSample,
   FoldEvent,
+  FoldEconomicsInput,
   PriceProfile,
   SampleDecomposition,
   CacheTotals,

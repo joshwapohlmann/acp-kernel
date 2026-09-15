@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildCacheReport,
+  computeFoldEconomics,
   decomposeSample,
   formatCacheReport,
   type CacheSample,
@@ -285,6 +286,27 @@ test("acp_cache tool definitions registered across wires", () => {
   assert.ok(ACP_TOOL_NAMES.has("acp_cache"));
   assert.ok(ACP_READONLY_TOOLS.has("acp_cache"));
   assert.ok(!ACP_CACHE_TOOL_OPENAI.function.description.includes("loop"));
+});
+
+test("computeFoldEconomics matches #359 formulas under default profile", () => {
+  const e = computeFoldEconomics({
+    seq: 1,
+    at: 1_000_000,
+    S: 50_000,
+    sigma: 2_000,
+    hPct: 33,
+    T: 17_000,
+    requestsAfter: 21,
+    turnsToNextFold: 21,
+  });
+  // ΔC₁ = (w-r)T + qσ - rS = 0.9*17000 + 4*2000 - 0.1*50000 = 18300
+  assert.equal(e.oneTimeCostUnits, 18_300);
+  // Δs = (S-σ)r = 48000 * 0.1 = 4800
+  assert.equal(e.perTurnSavingUnits, 4_800);
+  assert.ok(Math.abs(e.breakevenTurns! - 18_300 / 4_800) < 1e-9);
+  assert.equal(e.paidBack, true);
+  assert.equal(e.savedSoFar, 48_000 * 21);
+  assert.equal(e.netTokenDelta, 17_000 + 2_000 - 50_000);
 });
 
 function round1(n: number): number {

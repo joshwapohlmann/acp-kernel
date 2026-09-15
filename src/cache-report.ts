@@ -219,6 +219,63 @@ function hitPct(input: number, cached: number): number {
   return input > 0 ? (cached / input) * 100 : 0;
 }
 
+/** Measured counters for one fold. Streaming hosts accumulate these
+ * incrementally; buildCacheReport derives them from raw samples. */
+export interface FoldEconomicsInput {
+  seq: number;
+  at: number;
+  /** S — tokens removed from the view by the fold. */
+  S: number;
+  /** σ — summary tokens that replaced them (0 when unknown). */
+  sigma: number;
+  Vprime?: number | null;
+  /** Measured hit rate (0-100) of the first post-fold sample. */
+  hPct: number | null;
+  /** T — measured compRepay attributed to this fold. */
+  T: number;
+  requestsAfter: number;
+  /** Measured turns until the next fold; null while still running. */
+  turnsToNextFold: number | null;
+}
+
+export function computeFoldEconomics(
+  f: FoldEconomicsInput,
+  price?: PriceProfile,
+): FoldEconomics {
+  const w = price?.w ?? 1.0;
+  const r = price?.r ?? 0.1;
+  const q = price?.q ?? 4.0;
+  const netTokenDelta = f.T + f.sigma - f.S;
+  const savingPerTurn = f.S - f.sigma;
+  const oneTimeCostUnits = (w - r) * f.T + q * f.sigma - r * f.S;
+  const perTurnSavingUnits = savingPerTurn * r;
+  const breakevenTurns =
+    perTurnSavingUnits > 0
+      ? Math.max(0, oneTimeCostUnits) / perTurnSavingUnits
+      : null;
+  const paidBack =
+    f.turnsToNextFold !== null && breakevenTurns !== null
+      ? f.turnsToNextFold >= breakevenTurns
+      : null;
+  return {
+    seq: f.seq,
+    at: f.at,
+    S: f.S,
+    sigma: f.sigma,
+    Vprime: f.Vprime ?? null,
+    hPct: f.hPct,
+    T: f.T,
+    requestsAfter: f.requestsAfter,
+    savedSoFar: Math.max(0, savingPerTurn) * f.requestsAfter,
+    turnsToNextFold: f.turnsToNextFold,
+    netTokenDelta,
+    oneTimeCostUnits: round1(oneTimeCostUnits),
+    perTurnSavingUnits: round1(perTurnSavingUnits),
+    breakevenTurns,
+    paidBack,
+  };
+}
+
 export function buildCacheReport(
   samplesIn: readonly CacheSample[],
   foldsIn: readonly FoldEvent[],
@@ -300,9 +357,8 @@ export function buildCacheReport(
   const linesOmitted = Math.max(0, lines.length - maxLines);
   const visibleLines = lines.slice(linesOmitted);
 
-  const foldSeqOf = (j: number): number => j + 1;
   const foldEcon: FoldEconomics[] = folds.map((f, j) => {
-    const seq = foldSeqOf(j);
+    const seq = j + 1;
     const S = f.tokensCompressed;
     const sigma = f.summaryTokens ?? 0;
     const T = decs.reduce(
@@ -322,35 +378,20 @@ export function buildCacheReport(
       nextAt !== undefined
         ? samples.filter((s) => s.at > f.at && s.at <= nextAt).length
         : null;
-    const netTokenDelta = T + sigma - S;
-    const savingPerTurn = S - sigma;
-    const oneTimeCostUnits = (w - r) * T + q * sigma - r * S;
-    const perTurnSavingUnits = savingPerTurn * r;
-    const breakevenTurns =
-      perTurnSavingUnits > 0
-        ? Math.max(0, oneTimeCostUnits) / perTurnSavingUnits
-        : null;
-    const paidBack =
-      turnsToNextFold !== null && breakevenTurns !== null
-        ? turnsToNextFold >= breakevenTurns
-        : null;
-    return {
-      seq,
-      at: f.at,
-      S,
-      sigma,
-      Vprime: f.viewAfter ?? null,
-      hPct,
-      T,
-      requestsAfter,
-      savedSoFar: Math.max(0, savingPerTurn) * requestsAfter,
-      turnsToNextFold,
-      netTokenDelta,
-      oneTimeCostUnits: round1(oneTimeCostUnits),
-      perTurnSavingUnits: round1(perTurnSavingUnits),
-      breakevenTurns,
-      paidBack,
-    };
+    return computeFoldEconomics(
+      {
+        seq,
+        at: f.at,
+        S,
+        sigma,
+        Vprime: f.viewAfter,
+        hPct,
+        T,
+        requestsAfter,
+        turnsToNextFold,
+      },
+      { w, r, q },
+    );
   });
 
   const econ: EconomicsSummary = {
