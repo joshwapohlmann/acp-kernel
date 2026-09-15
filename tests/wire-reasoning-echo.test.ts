@@ -2,6 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { coreToOpenai, openaiToCore, type OpenAIRequestBody } from "../src/wire/openai.js";
+import { createCore } from "../src/compress.js";
+import { createInitialState } from "../src/state.js";
+import { defaultConfig } from "../src/config.js";
+import { prune } from "../src/prune.js";
 
 // A thinking-mode host replays assistant turns whose `reasoning_content` is
 // present but BLANK (the model emitted no chain of thought for that turn).
@@ -97,4 +101,67 @@ test("parallel calls keep their call order and their results keep theirs", () =>
         wire.slice(1, 3).map((m) => m.tool_call_id),
         [GREP_CALL.id, BASH_CALL.id],
     );
+});
+
+test("a blank echo survives the full pipeline and a history fold", () => {
+    // #289 post-fold shape: summary ahead, open blank-echo turn followed only by its result.
+    const core = createCore();
+    const state = createInitialState();
+    const base = defaultConfig(200000);
+    const config = {
+        ...base,
+        compress: { ...base.compress, minCompressRange: 0, minSummaryLength: 0 },
+    };
+    const body: OpenAIRequestBody = {
+        model: "deepseek-v4-flash",
+        messages: [
+            { role: "user", content: "step one" },
+            { role: "assistant", content: ".", reasoning_content: "", tool_calls: [BASH_CALL] },
+            { role: "tool", tool_call_id: BASH_CALL.id, content: "done one" },
+            { role: "user", content: "step two" },
+            { role: "assistant", content: "ok two" },
+            { role: "user", content: "step three" },
+            { role: "assistant", content: "", reasoning_content: "", tool_calls: [GREP_CALL] },
+            { role: "tool", tool_call_id: GREP_CALL.id, content: "done three" },
+        ],
+    };
+
+    const turn = core.processTurn({
+        messages: openaiToCore(body).msgs,
+        state,
+        config,
+        tokenCount: 4000,
+        renderTags: "none",
+    });
+
+    const tailCall = turn.messages.find(
+        (m) => m.contentType === "tool-call" && m.toolCallId === GREP_CALL.id,
+    );
+    assert.ok(tailCall?.reasoningPresent, "marker must survive the pipeline");
+
+    const anchor = turn.messages.find((m) => m.role === "user" && m.text === "step three");
+    assert.ok(anchor, "anchor user message present");
+    const anchorRef = Number(turn.state.messageRefs.byRaw[anchor!.id]!.slice(1));
+    const applied = core.applyCompression({
+        ranges: [
+            {
+                startRef: "m00001",
+                endRef: `m${String(anchorRef - 1).padStart(5, "0")}`,
+                summary: "steps one and two recap",
+            },
+        ],
+        messages: turn.messages,
+        state: turn.state,
+        config,
+    });
+    assert.equal(applied.result.errors.length, 0);
+
+    const rebuilt = coreToOpenai(prune(turn.messages, applied.state));
+    assert.ok(rebuilt.some((m) => m.role === "system"), "fold injected a summary message");
+    const tailWire = rebuilt.find(
+        (m) => m.role === "assistant" && Array.isArray(m.tool_calls),
+    );
+    assert.ok(tailWire, "tail assistant turn still present");
+    assert.ok("reasoning_content" in tailWire!, "blank key must survive the fold rebuild");
+    assert.strictEqual(tailWire!.reasoning_content, "");
 });
