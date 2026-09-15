@@ -1,3 +1,4 @@
+import { clampPrefix, clampWindow } from "./truncate.js";
 import type { Config, CoreMessage } from "./types.js";
 
 export interface TruncateOptions {
@@ -61,8 +62,8 @@ export function truncateLargeToolOutputs(
         const original = messages[candidate.index]!.text ?? "";
         if (original.length <= opts.keepPrefixChars + opts.keepSuffixChars) continue;
 
-        const prefix = original.slice(0, opts.keepPrefixChars);
-        const suffix = original.slice(-opts.keepSuffixChars);
+        const prefix = clampPrefix(original, opts.keepPrefixChars);
+        const suffix = clampWindow(original, original.length - opts.keepSuffixChars, original.length);
         const replacement =
             prefix +
             `\n\n...${TRUNCATION_MARKER} — original ~${candidate.tokens} tokens]...\n\n` +

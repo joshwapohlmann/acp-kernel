@@ -89,7 +89,7 @@ export function parseCompressArgs(input: unknown, opts?: { callId?: string }): P
 }
 
 function parseStringInput(raw: string, callId: string | undefined, diag: CompressParseDiagnostics): ParsedCompressInput {
-    diag.rawPrefix = raw.slice(0, 800);
+    diag.rawPrefix = clampPrefix(raw, 800);
     diag.length = raw.length;
     const cleaned = stripFence(raw.trim());
     const first = parseStringCore(cleaned, callId, diag);

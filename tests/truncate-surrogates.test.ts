@@ -2,10 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { clampPrefix, clampWindow } from "../src/truncate.js";
 import { hideConsumedCompressCalls } from "../src/hide-consumed.js";
-import { deriveTopicFromSummary } from "../src/parse-compress-input.js";
+import { deriveTopicFromSummary, parseCompressArgs } from "../src/parse-compress-input.js";
 import { buildRecap } from "../src/report.js";
 import { searchBlocks, messageDocs, type SearchDoc } from "../src/search/index.js";
 import { createInitialState } from "../src/state.js";
+import { topicFallback } from "../src/panel/topic.js";
+import { truncateLargeToolOutputs } from "../src/truncate-tools.js";
+import { buildRestoredContentPreview } from "../src/decompress.js";
+import { defaultConfig } from "../src/config.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "../src/types.js";
 
 const EMOJI = "\u{1F980}";
@@ -134,4 +138,60 @@ test("deriveTopicFromSummary: heading straddling the 60-unit cut stays paired", 
     assert.ok(topic !== undefined);
     assert.ok(topic!.length <= 60);
     assertNoUnpairedSurrogates(topic!);
+});
+
+test("topicFallback: astral char straddling the 30-unit cut stays paired", () => {
+    // units 0-28 'h', 29-30 astral: old slice(0,30) kept D83E alone
+    const out = topicFallback(`h${"h".repeat(28)}${EMOJI}rest of the sentence`);
+    assert.ok(out.endsWith("\u2026"));
+    assert.ok(!out.includes(EMOJI));
+    assertNoUnpairedSurrogates(out);
+});
+
+test("topicFallback: short topics pass through untouched", () => {
+    assert.equal(topicFallback(`ok ${EMOJI}`), `ok ${EMOJI}`);
+});
+
+test("truncateLargeToolOutputs: prefix/suffix cuts straddling pairs stay paired", () => {
+    // x*9 | EMOJI@9-10 | m*300 | EMOJI@311-312 | q*9 (len 322):
+    // the prefix cut at 10 splits the first pair; the suffix start at len-10=312 lands on a low half
+    const text = "x".repeat(9) + EMOJI + "m".repeat(300) + EMOJI + "q".repeat(9);
+    const messages: CoreMessage[] = [
+        { id: "t1", role: "tool", contentType: "tool-result", toolName: "bash", toolCallId: "c1", text },
+        { id: "u1", role: "user", contentType: "text", text: "go" },
+    ];
+    const config = defaultConfig(1000);
+    const r = truncateLargeToolOutputs(messages, config.modelContextLimit, config, (t) => Math.max(1, t.length), {
+        minOutputTokens: 1,
+        keepPrefixChars: 10,
+        keepSuffixChars: 10,
+        protectRecentMessages: 0,
+    });
+    assert.equal(r.truncatedCount, 1);
+    const out = r.messages[0]!.text ?? "";
+    assert.ok(out.includes("[truncated for context space]"));
+    assert.ok(out.startsWith("x".repeat(9)));
+    assert.ok(out.endsWith("q".repeat(9)));
+    assertNoUnpairedSurrogates(out);
+});
+
+test("buildRestoredContentPreview: per-message 200-unit cut straddling a pair stays paired", () => {
+    const state = createInitialState();
+    // z*199 | EMOJI@199-200 | tail: old slice(0,200) kept D83E alone
+    const messages: CoreMessage[] = [
+        { id: "m1", role: "assistant", contentType: "text", text: "z".repeat(199) + EMOJI + "tail" },
+    ];
+    const { preview, restoredCount } = buildRestoredContentPreview(messages, new Set(["m1"]), state);
+    assert.equal(restoredCount, 1);
+    assert.ok(preview.startsWith("[assistant] z"));
+    assert.ok(preview.includes("..."));
+    assertNoUnpairedSurrogates(preview);
+});
+
+test("parse diagnostics: rawPrefix 800-unit cut straddling a pair stays paired", () => {
+    // j*799 | EMOJI@799-800 | k*50: old slice(0,800) kept D83E alone
+    const raw = "j".repeat(799) + EMOJI + "k".repeat(50);
+    const r = parseCompressArgs(raw);
+    assert.equal(r.diagnostics.rawPrefix?.length, 799);
+    assertNoUnpairedSurrogates(r.diagnostics.rawPrefix ?? "");
 });

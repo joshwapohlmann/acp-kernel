@@ -1,4 +1,5 @@
 import { SUMMARY_HEADER } from "./prune.js";
+import { clampPrefix } from "./truncate.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
 
 export function parseBlockIdArg(arg: string): string | null {
@@ -117,7 +118,7 @@ export function buildRestoredContentPreview(
     for (const message of restored) {
         if (totalLength >= MAX_PREVIEW) break;
         const text = message.text ?? "";
-        const truncated = text.length > MAX_PER_MESSAGE ? text.slice(0, MAX_PER_MESSAGE) + "..." : text;
+        const truncated = text.length > MAX_PER_MESSAGE ? clampPrefix(text, MAX_PER_MESSAGE) + "..." : text;
         const label =
             message.toolName && message.contentType !== "text"
                 ? `${message.toolName}: ${truncated}`
