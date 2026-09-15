@@ -847,6 +847,12 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   // leaves a valid message stream and stays allowed (#564 depends on it), so
   // only turns whose KEPT side carries a tool-call while the FOLDED side
   // carries the reasoning are withdrawn, entirely (all members stay visible).
+  // The same carve can also strip a call and its result onto opposite sides of
+  // the fold. Either half alone is invalid — a visible call whose result folded
+  // is an unanswered tool_call_id, a visible result whose call folded answers
+  // nothing — so those pairs are withdrawn together, both halves staying
+  // visible. Whole pairs may still fold while the turn's reasoning and text
+  // stay visible (#564).
   {
     const reasoningIds = new Set<string>();
     const callIds = new Set<string>();
@@ -869,17 +875,46 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
       splitTurnCount++;
       for (const id of group) withdrawIds.add(id);
     }
+    const resultIdByCallId = new Map<string, string>();
+    for (const m of input.messages) {
+      if (!m.id || m.contentType !== "tool-result") continue;
+      if (typeof m.toolCallId !== "string") continue;
+      if (!resultIdByCallId.has(m.toolCallId)) {
+        resultIdByCallId.set(m.toolCallId, m.id);
+      }
+    }
+    let splitPairCount = 0;
+    for (const m of input.messages) {
+      if (!m.id || m.contentType !== "tool-call") continue;
+      if (typeof m.toolCallId !== "string") continue;
+      const resultId = resultIdByCallId.get(m.toolCallId);
+      if (resultId === undefined) continue;
+      if (effectiveMessageIds.has(m.id) === effectiveMessageIds.has(resultId)) {
+        continue;
+      }
+      withdrawIds.add(m.id);
+      withdrawIds.add(resultId);
+      splitPairCount++;
+    }
     if (withdrawIds.size > 0) {
       for (const id of withdrawIds) effectiveMessageIds.delete(id);
       const beforeWithdraw = filteredIds.length;
       filteredIds = filteredIds.filter((id) => !withdrawIds.has(id));
+      const splitDesc = [
+        splitTurnCount > 0 ? `${splitTurnCount} turn(s)` : null,
+        splitPairCount > 0
+          ? `${splitPairCount} tool call/result pair(s)`
+          : null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(" and ");
       if (filteredIds.length === 0 && consumedBlockIds.length === 0) {
         throw new Error(
-          `Range would split ${splitTurnCount} turn(s) at the protected-zone boundary: a visible tool-call must keep its reasoning run (strict-echo providers reject a rebuilt request that lost it). Shrink the range to end before the turn starts, or wait until the whole turn ages out of the protected zone.`,
+          `Range would split ${splitDesc} at the protected-zone boundary: a visible tool-call must keep its reasoning run and its results (strict providers reject a rebuilt request that lost either). Shrink the range to end before the turn starts, or wait until the whole turn ages out of the protected zone.`,
         );
       }
       warnings.push(
-        `Withdrawn ${beforeWithdraw - filteredIds.length} message(s) from compression range to keep ${splitTurnCount} turn(s) intact (visible tool-call would lose its reasoning run).`,
+        `Withdrawn ${beforeWithdraw - filteredIds.length} message(s) from compression range to keep ${splitDesc} intact (visible tool-call would lose its reasoning run or its results).`,
       );
     }
   }
