@@ -424,3 +424,29 @@ test("strip-images: image-only google contents collapse to a text placeholder", 
   );
   assert.equal(untouched.removed, 0);
 });
+
+test("google: edited core text re-renders plain while sibling raw parts and signature survive", () => {
+  const body: GoogleRequestBody = {
+    contents: [
+      { role: "user", parts: [{ text: "go" }] },
+      {
+        role: "model",
+        parts: [
+          { text: "hello", thoughtSignature: "sig-t" },
+          { videoMetadata: { startOffset: 0 } },
+        ],
+      },
+    ],
+  };
+  const { msgs } = googleToCore(body);
+  const modelText = msgs.find(
+    (m) => m.role === "assistant" && m.contentType === "text",
+  )!;
+  assert.equal(modelText.googleThoughtSignature, "sig-t");
+  modelText.text = "hello [m00002]";
+  const contents = coreToGoogle(msgs);
+  assert.deepEqual(contents[1]!.parts, [
+    { text: "hello [m00002]", thoughtSignature: "sig-t" },
+    { videoMetadata: { startOffset: 0 } },
+  ]);
+});
