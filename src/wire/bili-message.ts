@@ -34,10 +34,20 @@ export interface BiliMessage extends CoreMessage {
     /** Responses API: the original input item (for input_image, or a raw
      *  function_call / function_call_output we pass through). */
     rawResponsesItem?: unknown;
+    /** Google/Gemini: the original content parts of this message, in wire
+     *  order (inlineData/fileData, executableCode, functionCall/Response ids,
+     *  thought parts and unknown future part types). coreToGoogle rebuilds
+     *  the content from these when present, so parts the core does not model
+     *  survive a round-trip. */
+    rawGoogleParts?: unknown[];
     /** Anthropic thinking signature. Anthropic verifies thinking+signature
      *  pairs; without it the request is rejected. Stored alongside the
      *  reasoning text so coreToAnthropic can reattach it. */
     thinkingSignature?: string;
+    /** Google/Gemini thought signature (thoughtSignature). Gemini 3 validates
+     *  the signature of every replayed thought part, so a reasoning core
+     *  carries it here for coreToGoogle to reattach. */
+    googleThoughtSignature?: string;
     /** OpenAI reasoning_content (chain-of-thought from DeepSeek-R1, GLM-4.6
      *  thinking, Qwen-QwQ). These models require reasoning_content be echoed
      *  back on subsequent requests or the API returns HTTP 400; stored so

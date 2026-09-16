@@ -1,4 +1,4 @@
-export const WIRE_FORMATS = ["anthropic", "openai", "responses"] as const;
+export const WIRE_FORMATS = ["anthropic", "openai", "responses", "google"] as const;
 export type WireFormat = (typeof WIRE_FORMATS)[number];
 
 export function isWireFormat(value: unknown): value is WireFormat {
@@ -16,6 +16,9 @@ export function isWireFormat(value: unknown): value is WireFormat {
 export function detectWireFormat(payload: unknown): WireFormat | undefined {
   if (payload === null || typeof payload !== "object") return undefined;
   const p = payload as Record<string, unknown>;
+  // Gemini native carries the conversation in `contents`; no other dialect
+  // does, and it never has `input`/`messages`, so the check is unambiguous.
+  if (Array.isArray(p.contents)) return "google";
   if (Array.isArray(p.input)) return "responses";
   const messages = p.messages;
   if (!Array.isArray(messages)) return undefined;
