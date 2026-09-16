@@ -33,6 +33,7 @@ import {
   type PipelineContext,
   type PipelineNode,
   type NodeIO,
+  type NodeEffects,
 } from "./pipeline.js";
 import type {
   ApplyCompressionResult,
@@ -384,6 +385,10 @@ export function createCore(ports: Ports = {}): CompressionCore {
       // (which may have consumed blocks of tier N to produce tier N+1), every
       // tier should be eligible to re-evaluate from the new token count.
       state.nudge.lastShownByTier = {};
+      // A successful compression is by definition viable progress — restart
+      // the terminal-floor streak so the escape signal can only fire again
+      // after N fresh stuck events (#300).
+      state.terminalStreak = 0;
     }
 
     return {
@@ -419,6 +424,8 @@ export function createCore(ports: Ports = {}): CompressionCore {
       messages: result.messages,
       state: result.state,
       nudge: result.effects.nudge,
+      terminalEscape: result.effects.terminalEscape,
+      truncationSkipped: result.effects.truncationSkipped,
     };
   }
 
@@ -671,18 +678,64 @@ const emergencyTruncateNode: PipelineNode = {
       ctx.config.modelContextLimit > 0
         ? ctx.tokenCount / ctx.config.modelContextLimit
         : 0;
-    if (usage < ctx.config.truncate.threshold) return io;
+    const prevStreak = io.state.terminalStreak ?? 0;
+    if (usage < ctx.config.truncate.threshold) {
+      return prevStreak > 0
+        ? { ...io, state: { ...io.state, terminalStreak: 0 } }
+        : io;
+    }
     const trunc = truncateLargeToolOutputs(
       io.messages,
       ctx.tokenCount,
       ctx.config,
       ctx.countTokens,
-      { protectRecentMessages: ctx.config.preserveRecentMessages },
+      {
+        protectRecentMessages: ctx.config.preserveRecentMessages,
+        includeTextMessages: true,
+      },
     );
+
+    // Terminal-floor detection (#300): usage at/above the last-resort
+    // threshold while NO tier can reclaim the benefit floor AND truncation
+    // saved nothing means the irreducible floor exceeds the limit — no
+    // kernel-side action can bring this session back under it. Track a
+    // streak so one noisy turn doesn't declare terminality; N consecutive
+    // stuck events emit the escape signal for the host to surface once.
+    const nudge = io.effects.nudge;
+    const minBenefit = nudge?.breakdown.minPressureBenefit ?? 0;
+    const maxPending = nudge?.breakdown.maxPending ?? 0;
+    const noViableCompression =
+      nudge !== undefined &&
+      (minBenefit > 0 ? maxPending < minBenefit : maxPending <= 0);
+    const stuck = noViableCompression && trunc.savedTokens <= 0;
+    const streak = stuck ? prevStreak + 1 : 0;
+    const escapeAfter = ctx.config.truncate.terminalEscapeAfter ?? 3;
+    const triggered = stuck && escapeAfter > 0 && streak >= escapeAfter;
+
+    const effects: NodeEffects = {
+      ...io.effects,
+      truncatedCount: trunc.truncatedCount,
+    };
+    if (trunc.savedTokens <= 0) {
+      effects.truncationSkipped =
+        trunc.candidatesFound === 0
+          ? `emergency-truncate ran at ${Math.round(usage * 100)}% usage but found no truncatable content (no oversized tool-result or text message outside the last ${ctx.config.preserveRecentMessages} messages)`
+          : `emergency-truncate found ${trunc.candidatesFound} candidate(s) at ${Math.round(usage * 100)}% usage but none were large enough to save tokens`;
+    }
+    if (triggered) {
+      effects.terminalEscape = {
+        message: `Usage at ${Math.round(usage * 100)}% (${ctx.tokenCount}/${ctx.config.modelContextLimit} tokens) persists with nothing compressible above the benefit floor and no truncatable content: compression cannot reduce this context below the limit. Start a new session or use native compaction.`,
+        usage,
+        tokenCount: ctx.tokenCount,
+        modelContextLimit: ctx.config.modelContextLimit,
+        stuckEvents: streak,
+      };
+    }
     return {
       ...io,
       messages: trunc.messages,
-      effects: { ...io.effects, truncatedCount: trunc.truncatedCount },
+      state: { ...io.state, terminalStreak: streak },
+      effects,
     };
   },
 };
@@ -859,7 +912,8 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     for (const m of input.messages) {
       if (!m.id) continue;
       if (m.contentType === "reasoning") reasoningIds.add(m.id);
-      if (m.role === "assistant" && m.contentType === "tool-call") callIds.add(m.id);
+      if (m.role === "assistant" && m.contentType === "tool-call")
+        callIds.add(m.id);
     }
     const withdrawIds = new Set<string>();
     let splitTurnCount = 0;
@@ -1272,6 +1326,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const t1Eff = tiers[1]?.pending ?? 0;
   const t2Pen = tiers[2]?.pending ?? 0;
   const t3Pen = tiers[3]?.pending ?? 0;
+  const maxPending = Math.max(0, t1Eff, t2Pen, t3Pen);
   // First-sight mass bypass (#194): growthReference seeds to tokenCount when
   // no baseline exists, so a session that ARRIVES with a huge ready mass
   // (stateless full-history ingest / restored state) shows growthSinceReference
@@ -1349,10 +1404,9 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         lastShown === 0 || tokenCount - lastShown >= growthFloor;
       if (cadenceMet) {
         injectedTier = 2;
-        injectedReason =
-          t2CountReady
-            ? `T2 distill ready: ${t2Count} tier-1 blocks >= tier2Trigger ${config.tiers.tier2Trigger} (${t2Pen} tokens), usage ${Math.round(usage * 100)}%`
-            : `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+        injectedReason = t2CountReady
+          ? `T2 distill ready: ${t2Count} tier-1 blocks >= tier2Trigger ${config.tiers.tier2Trigger} (${t2Pen} tokens), usage ${Math.round(usage * 100)}%`
+          : `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     } else if (
       config.tiers.enabled &&
@@ -1364,10 +1418,9 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         lastShown === 0 || tokenCount - lastShown >= growthFloor;
       if (cadenceMet) {
         injectedTier = 3;
-        injectedReason =
-          t3CountReady
-            ? `T3 condense ready: ${t3Count} tier-2 blocks >= tier3Trigger ${config.tiers.tier3Trigger} (${t3Pen} tokens), usage ${Math.round(usage * 100)}%`
-            : `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+        injectedReason = t3CountReady
+          ? `T3 condense ready: ${t3Count} tier-2 blocks >= tier3Trigger ${config.tiers.tier3Trigger} (${t3Pen} tokens), usage ${Math.round(usage * 100)}%`
+          : `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     }
   }
@@ -1386,7 +1439,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       bestPending === 0
         ? `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`
         : `${label}: usage ${Math.round(usage * 100)}% but max pending ${bestPending} < min benefit ${minPressureBenefit} tokens (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — suppressed: rewriting below the benefit floor reclaims almost nothing while usage stays high; truncate.threshold remains the safety valve`;
-   } else {
+  } else {
     const tiersList = [1, 2, 3] as const;
     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
     const countReadyUngated = (t: 1 | 2 | 3) =>
@@ -1402,7 +1455,8 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       .map((t) => `T${t} ${tiers[t]!.pending}`);
     const readyCount = eligible
       .filter(
-        (t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReadyUngated(t),
+        (t) =>
+          (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReadyUngated(t),
       )
       .map(
         (t) =>
@@ -1411,7 +1465,8 @@ function decideNudge(input: NudgeInput): NudgeDecision {
           })`,
       );
     const readyAll = [...ready, ...readyCount];
-    const readyHint = readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
+    const readyHint =
+      readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
     const blocked = eligible
       .filter(
         (t) =>
@@ -1422,10 +1477,6 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       .map((t) => `T${t} (cadence)`);
     const blockedHint =
       blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
-    const maxPending = Math.max(
-      0,
-      ...Object.values(tiers).map((t) => t.pending),
-    );
     // Report the ACTUAL blocking condition, not a fixed template. A session
     // can have plenty to compress (pending >= threshold) but still not
     // inject because growth/floor/cadence isn't met — the old fixed
@@ -1476,6 +1527,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       pendingT1: tiers[1]!.pending,
       pendingT2: tiers[2]!.pending,
       pendingT3: tiers[3]!.pending,
+      maxPending,
     },
     contextBreakdown: ctxBreakdown,
   };
@@ -1529,6 +1581,7 @@ function cloneState(state: CompressionState): CompressionState {
     nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
     stats: { ...state.stats },
     absorbed: (state.absorbed ?? []).map((record) => ({ ...record })),
+    terminalStreak: state.terminalStreak,
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
   };

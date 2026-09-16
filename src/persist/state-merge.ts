@@ -20,5 +20,6 @@ export function mergeCompressionState(parsed: CompressionState): CompressionStat
     nextRunId: parsed.nextRunId ?? fresh.nextRunId,
     tokenSnapshot: parsed.tokenSnapshot ?? fresh.tokenSnapshot,
     absorbed: parsed.absorbed ?? fresh.absorbed,
+    terminalStreak: parsed.terminalStreak,
   };
 }
