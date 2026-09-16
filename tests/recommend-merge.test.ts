@@ -75,7 +75,10 @@ test("two small ranges whose sum >= threshold → ONE merged batch", () => {
   assert.equal(out[0]!.endRef, "m00020", "endRef = second child endRef");
 });
 
-test("three ranges: first two >= threshold, third tiny → TWO batches (tail kept)", () => {
+test("sub-threshold tail folds into preceding batch (overshoot allowed)", () => {
+  // Regression (#309 / billion-context #847): the old trailing flush emitted
+  // the 200-char tail as its own batch, which nudge then listed as
+  // compressible even though the apply-side gate rejects it standalone.
   const ranges = [
     makeRange({
       tokens: 600,
@@ -97,13 +100,15 @@ test("three ranges: first two >= threshold, third tiny → TWO batches (tail kep
     }),
   ];
   const out = mergeRangesToThreshold(ranges, 5000);
-  assert.equal(out.length, 2, "batch1 (>= threshold) + tail");
-  assert.equal(out[0]!.tokens, 1300, "first batch is the merged first two");
+  assert.equal(out.length, 1, "tail folded into the preceding batch");
+  assert.equal(out[0]!.tokens, 1350, "batch + tail summed");
+  assert.equal(out[0]!.count, 3);
   assert.equal(out[0]!.startRef, "m00001");
-  assert.equal(out[0]!.endRef, "m00006");
-  assert.equal(out[1]!.tokens, 50, "tail is the tiny third range");
-  assert.equal(out[1]!.startRef, "m00010");
-  assert.equal(out[1]!.endRef, "m00011");
+  assert.equal(out[0]!.endRef, "m00011", "span extended to the tail's endRef");
+  assert.ok(
+    (out[0]!.chars ?? out[0]!.tokens * 4) >= 5000,
+    "folded batch alone clears the gate",
+  );
 });
 
 test("dangerous: true on a child propagates to merged batch", () => {
@@ -197,20 +202,38 @@ test("merges across ref gaps (non-adjacent refs)", () => {
   assert.equal(out[0]!.endRef, "m00060");
 });
 
-test("all-tiny tail: three ranges each < threshold → ONE merged range via trailing flush", () => {
-  // Each range tokens=100 → 100*4=400 chars, never reaches 5000 mid-loop, so
-  // the batch accumulates all three and is emitted as one range by the
-  // trailing flush. The merged range spans r1.startRef..r3.endRef with
-  // count/tokens summed.
+test("all content below threshold → [] (nothing can clear the gate)", () => {
+  // Total = 3×400 = 1200 chars < 5000: no selection of this content can pass
+  // the apply-side gate, so offering a merged sub-threshold range would only
+  // produce guaranteed-rejected calls (#309). Offer nothing instead.
   const ranges = [
     makeRange({ tokens: 100, count: 1, startRef: "m00001", endRef: "m00002" }),
     makeRange({ tokens: 100, count: 1, startRef: "m00003", endRef: "m00004" }),
     makeRange({ tokens: 100, count: 1, startRef: "m00005", endRef: "m00006" }),
   ];
   const out = mergeRangesToThreshold(ranges, 5000);
-  assert.equal(out.length, 1, "trailing flush emits a single merged range");
-  assert.equal(out[0]!.tokens, 300, "tokens summed");
-  assert.equal(out[0]!.count, 3, "count summed");
-  assert.equal(out[0]!.startRef, "m00001", "spans first child startRef");
-  assert.equal(out[0]!.endRef, "m00006", "spans last child endRef");
+  assert.deepEqual(out, [], "sub-threshold remainder is not offered");
+});
+
+test("invariant: every emitted batch alone clears minChars", () => {
+  // #309: nudge lists recommendedRanges verbatim; any entry below the gate's
+  // char floor is a guaranteed-rejected call. Check across shapes: clean
+  // flushes, a foldable tail, and real `chars` fields under a CJK-like
+  // tokenizer where tokens ≈ chars.
+  const cjk = (n: number): CompressibleRange =>
+    makeRange({ tokens: n, chars: n, count: Math.max(1, Math.round(n / 50)) });
+  for (const [ranges, minChars] of [
+    [[cjk(600), cjk(700), cjk(50)], 5000],
+    [[cjk(3000), cjk(3000)], 5000],
+    [[cjk(6000), cjk(2000), cjk(2000)], 5000],
+    [[cjk(100), cjk(100)], 5000],
+  ] as Array<[CompressibleRange[], number]>) {
+    const out = mergeRangesToThreshold(ranges, minChars);
+    for (const r of out) {
+      assert.ok(
+        r.chars >= minChars,
+        `batch ${r.startRef}–${r.endRef} (${r.chars} chars) must clear ${minChars}`,
+      );
+    }
+  }
 });

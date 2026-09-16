@@ -525,14 +525,14 @@ test("arbitration: emergency argmax picks T3 when T3 > T2 > T1 effective", () =>
   assert.equal(turn.nudge.breakdown.emergencyOverride, 1);
 });
 
-test("arbitration: effective filter drops fragmented merge tail (pendingT1 < raw sum)", () => {
+test("arbitration: sub-threshold tail folds into preceding batch (pendingT1 spans full remainder)", () => {
   const core = createCore();
-  // With minCompressRange > 0, pendingByTier applies the effective filter
-  // (merged ranges whose tokens*4 < minCompressRange are dropped). 10 short
-  // msgs (800 chars / 200 tokens each) form 3 groups: [m0..m3]=800,
-  // [m4..m7]=800, [m8..m9]=400 (raw sum 2000). merge → [{m0..m7}=1600,
-  // {m8..m9}=400]; filter drops the 400-token tail (1600 chars < 5000) →
-  // pendingT1 = 1600, NOT the raw 2000.
+  // With minCompressRange > 0, mergeRangesToThreshold guarantees every emitted
+  // batch alone clears the gate (#309). 10 short msgs (800 chars / 200 tokens
+  // each) form 3 groups: [m0..m3]=3200c, [m4..m7]=3200c, [m8..m9]=1600c
+  // (raw sum 2000 tokens). Merge flushes [m0..m7]=6400c; the 1600c tail folds
+  // into it → ONE range m0..m9 (2000 tokens, 8000 chars) that clears 5000 on
+  // its own → pendingT1 = 2000 and nudge lists exactly that one range.
   const config = buildConfig({
     compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
   });
@@ -544,9 +544,15 @@ test("arbitration: effective filter drops fragmented merge tail (pendingT1 < raw
   const turn = core.processTurn({ messages, state, config, tokenCount: 35000 });
   assert.equal(
     turn.nudge.breakdown.pendingT1,
-    1600,
-    "effective filter keeps only the merged m0..m7 range (1600 tokens); drops the m8..m9 tail",
+    2000,
+    "tail folded into the preceding batch → the whole 8000-char remainder counts",
   );
+  assert.equal(
+    turn.nudge.compressibleRanges.length,
+    1,
+    "#309: only gate-clearing ranges are listed",
+  );
+  assert.equal(turn.nudge.compressibleRanges[0]!.tokens, 2000);
 });
 
 test("over-limit fires force-nudge when compressible content exists", () => {
