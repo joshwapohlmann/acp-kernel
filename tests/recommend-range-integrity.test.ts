@@ -47,7 +47,11 @@ function userMsg(id: string, text: string): CoreMessage {
   return { id, role: "user", contentType: "text", text };
 }
 
-function textMsg(id: string, text: string, role: CoreMessage["role"]): CoreMessage {
+function textMsg(
+  id: string,
+  text: string,
+  role: CoreMessage["role"],
+): CoreMessage {
   return { id, role, contentType: "text", text };
 }
 
@@ -55,7 +59,11 @@ function reasoningMsg(id: string, text: string): CoreMessage {
   return { id, role: "assistant", contentType: "reasoning", text };
 }
 
-function callMsg(id: string, toolName: string, toolCallId: string): CoreMessage {
+function callMsg(
+  id: string,
+  toolName: string,
+  toolCallId: string,
+): CoreMessage {
   return {
     id,
     role: "assistant",
@@ -66,7 +74,11 @@ function callMsg(id: string, toolName: string, toolCallId: string): CoreMessage 
   };
 }
 
-function resultMsg(id: string, toolName: string, toolCallId: string): CoreMessage {
+function resultMsg(
+  id: string,
+  toolName: string,
+  toolCallId: string,
+): CoreMessage {
   return {
     id,
     role: "tool",
@@ -90,7 +102,11 @@ function assignAll(messages: CoreMessage[]): CompressionState {
  *  half sits inside the protected zone. `preserveRecentMessages: 4` protects
  *  m00005..m00008, leaving the turn's reasoning (m00003) and call (m00004)
  *  compressible while its result (m00005) is not. */
-function splitTurnFixture(): { messages: CoreMessage[]; state: CompressionState; config: Config } {
+function splitTurnFixture(): {
+  messages: CoreMessage[];
+  state: CompressionState;
+  config: Config;
+} {
   const messages = [
     userMsg("u0", "task"),
     textMsg("a0", "ack", "assistant"),
@@ -120,7 +136,10 @@ function recommend(
 ): CompressibleRange[] {
   const protectedRefs = computeProtectedRefs(messages, state, cfg);
   const ranges = buildCompressibleRanges(messages, state, cfg, protectedRefs);
-  return mergeRangesToThreshold(ranges.compressible, cfg.compress.minCompressRange);
+  return mergeRangesToThreshold(
+    ranges.compressible,
+    cfg.compress.minCompressRange,
+  );
 }
 
 test("recommended ranges are foldable: a turn split by the protected zone is not advertised", () => {
@@ -168,7 +187,10 @@ test("recommended ranges are foldable: a wholly compressible turn is still adver
   const state = assignAll(messages);
   const recommended = recommend(messages, state, cfg);
 
-  assert.ok(recommended.length > 0, "a fully compressible turn must stay advertised");
+  assert.ok(
+    recommended.length > 0,
+    "a fully compressible turn must stay advertised",
+  );
   const covering = recommended.find(
     (r) => r.startRef <= "m00003" && r.endRef >= "m00006",
   );
