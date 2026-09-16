@@ -246,7 +246,7 @@ test("buildCompressibleRanges counts user messages per range", () => {
 });
 
 test("mergeRangesToThreshold sums userMsgs across merged ranges", () => {
-  const base = { count: 2, chars: 100, toolPct: 50, textPct: 50, tokens: 500 };
+  const base = { count: 2, chars: 400, toolPct: 50, textPct: 50, tokens: 500 };
   const ranges: CompressibleRange[] = [
     { startRef: "m00001", endRef: "m00002", userMsgs: 1, ...base },
     { startRef: "m00003", endRef: "m00004", userMsgs: 2, ...base },

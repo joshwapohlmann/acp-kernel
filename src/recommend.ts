@@ -327,8 +327,11 @@ function rangeChars(r: CompressibleRange): number {
  *  token estimates (tokens*4) instead broke whenever the host injected a
  *  tokenizer where tokens != chars/4 (CJK-aware estimators are ~1:1, so
  *  tokens*4 overestimated size ~4x and nudge recommended ranges the apply
- *  side then refused). A sub-threshold tail batch is still emitted — callers
- *  filter by effectiveness separately (see pendingByTier). */
+ *  side then refused). Invariant: EVERY returned batch alone clears
+ *  `minChars`. A sub-threshold tail is folded into the preceding batch
+ *  (overshoot allowed); if no batch precedes it, nothing is emitted — the
+ *  whole remainder is below the gate, so no selection of it can pass and
+ *  offering it only yields guaranteed-rejected calls (billion-context #847). */
 export function mergeRangesToThreshold(
   ranges: CompressibleRange[],
   minChars: number,
@@ -346,8 +349,9 @@ export function mergeRangesToThreshold(
       batchChars = 0;
     }
   }
-  if (batch.length > 0) {
-    result.push(mergeBatch(batch));
+  if (batch.length > 0 && result.length > 0) {
+    const prev = result[result.length - 1]!;
+    result[result.length - 1] = mergeBatch([prev, ...batch]);
   }
   return result;
 }
