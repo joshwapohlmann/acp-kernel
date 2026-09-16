@@ -1,3 +1,4 @@
+import { clampPrefix, clampWindow } from "./truncate.js";
 import type { Config, CoreMessage } from "./types.js";
 import { SUMMARY_HEADER, isRenderedSummaryMessage } from "./prune.js";
 
@@ -93,8 +94,8 @@ export function truncateLargeToolOutputs(
             if (original.length <= opts.keepPrefixChars + opts.keepSuffixChars) {
                 continue;
             }
-            const prefix = original.slice(0, opts.keepPrefixChars);
-            const suffix = original.slice(-opts.keepSuffixChars);
+            const prefix = clampPrefix(original, opts.keepPrefixChars);
+            const suffix = clampWindow(original, original.length - opts.keepSuffixChars, original.length);
             const replacement = `${prefix}\n\n...${TRUNCATION_MARKER} — original ~${tokens} tokens]...\n\n${suffix}`;
             replacements.set(candidate.id, replacement);
             truncatedCount++;

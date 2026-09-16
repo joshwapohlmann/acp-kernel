@@ -22,6 +22,7 @@
 // written entry is dropped, never guessed. Diagnostics are data, not logs:
 // adapters decide where to emit them (log line, debug event, tool text).
 
+import { clampPrefix } from "./truncate.js";
 import type { CompressRangeSpec } from "./types.js";
 
 export type CompressParseKind =
@@ -88,7 +89,7 @@ export function parseCompressArgs(input: unknown, opts?: { callId?: string }): P
 }
 
 function parseStringInput(raw: string, callId: string | undefined, diag: CompressParseDiagnostics): ParsedCompressInput {
-    diag.rawPrefix = raw.slice(0, 800);
+    diag.rawPrefix = clampPrefix(raw, 800);
     diag.length = raw.length;
     const cleaned = stripFence(raw.trim());
     const first = parseStringCore(cleaned, callId, diag);
@@ -324,7 +325,7 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
     const source = heading !== null ? heading[1]! : (summary.split("\n").find((l) => l.trim().length > 0) ?? "");
     const text = source.trim().replace(/^[\u2022\-*]\s+/, "");
     if (text.length === 0) return undefined;
-    return text.length > 60 ? text.slice(0, 60).trimEnd() : text;
+    return text.length > 60 ? clampPrefix(text, 60).trimEnd() : text;
 }
 
 /** Split a bare string content (not a JSON array) into line-form entries: a
