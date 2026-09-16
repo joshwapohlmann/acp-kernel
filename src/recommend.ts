@@ -26,6 +26,7 @@ import {
   isNeverPreserveRecent,
 } from "./protected.js";
 import { countMessageTokens } from "./tokenize.js";
+import { computeIntegrityWithdrawals } from "./turn-integrity.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,7 +148,8 @@ export function buildCompressibleRanges(
   protectedZoneRefs?: Set<string>,
   countTokens: (text: string) => number = estimateTextTokens,
 ): ContextRanges {
-  const compressibleMsgs: {
+  let compressibleMsgs: {
+    id: string;
     ref: string;
     gapBefore: boolean;
     tokens: number;
@@ -204,6 +206,7 @@ export function buildCompressibleRanges(
     }
 
     compressibleMsgs.push({
+      id: msg.id,
       ref,
       gapBefore: skipSinceCompressible,
       tokens: countMessageTokens(msg, countTokens),
@@ -213,6 +216,32 @@ export function buildCompressibleRanges(
     });
     skipSinceCompressible = false;
     skipSinceProtected = true;
+  }
+
+  // Foldability: the fold gate (src/compress.ts) withdraws every message whose
+  // turn would lose its reasoning run or whose call/result pair it would split,
+  // because the protected-zone carve removes individual messages after the
+  // range is built. A residual range that brushes the zone can therefore hold
+  // nothing the fold may take: it was advertised as compressible, and folding
+  // it then failed with "Range would split N tool call/result pair(s)". Screen
+  // the same messages out here so every advertised range is foldable, and treat
+  // each removed message as a gap so no range spans it.
+  const unfoldedIds = computeIntegrityWithdrawals(
+    messages,
+    new Set(compressibleMsgs.map((info) => info.id)),
+  ).withdrawn;
+  if (unfoldedIds.size > 0) {
+    let gapPending = false;
+    const kept: typeof compressibleMsgs = [];
+    for (const info of compressibleMsgs) {
+      if (unfoldedIds.has(info.id)) {
+        gapPending = true;
+        continue;
+      }
+      kept.push(gapPending ? { ...info, gapBefore: true } : info);
+      gapPending = false;
+    }
+    compressibleMsgs = kept;
   }
 
   // Build compressible groups (split at real array gaps and at user messages

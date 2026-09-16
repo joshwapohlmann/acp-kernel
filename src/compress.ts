@@ -22,7 +22,7 @@ import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
-import { computeTurnGroups } from "./turn-integrity.js";
+import { computeIntegrityWithdrawals } from "./turn-integrity.js";
 import {
   computeProtectedRefs,
   buildCompressibleRanges,
@@ -906,50 +906,18 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   // nothing — so those pairs are withdrawn together, both halves staying
   // visible. Whole pairs may still fold while the turn's reasoning and text
   // stay visible (#564).
+  //
+  // Both invariants are re-checked to a fixed point inside
+  // computeIntegrityWithdrawals: withdrawing a pair for the result half can
+  // strand a turn whose reasoning still folds and whose call now stays visible.
+  // The recommendation side calls the same helper, so it never advertises a
+  // range this gate always empties.
   {
-    const reasoningIds = new Set<string>();
-    const callIds = new Set<string>();
-    for (const m of input.messages) {
-      if (!m.id) continue;
-      if (m.contentType === "reasoning") reasoningIds.add(m.id);
-      if (m.role === "assistant" && m.contentType === "tool-call")
-        callIds.add(m.id);
-    }
-    const withdrawIds = new Set<string>();
-    let splitTurnCount = 0;
-    for (const group of computeTurnGroups(input.messages)) {
-      const foldHasReasoning = group.some(
-        (id) => effectiveMessageIds.has(id) && reasoningIds.has(id),
-      );
-      if (!foldHasReasoning) continue;
-      const keptHasCall = group.some(
-        (id) => !effectiveMessageIds.has(id) && callIds.has(id),
-      );
-      if (!keptHasCall) continue;
-      splitTurnCount++;
-      for (const id of group) withdrawIds.add(id);
-    }
-    const resultIdByCallId = new Map<string, string>();
-    for (const m of input.messages) {
-      if (!m.id || m.contentType !== "tool-result") continue;
-      if (typeof m.toolCallId !== "string") continue;
-      if (!resultIdByCallId.has(m.toolCallId)) {
-        resultIdByCallId.set(m.toolCallId, m.id);
-      }
-    }
-    let splitPairCount = 0;
-    for (const m of input.messages) {
-      if (!m.id || m.contentType !== "tool-call") continue;
-      if (typeof m.toolCallId !== "string") continue;
-      const resultId = resultIdByCallId.get(m.toolCallId);
-      if (resultId === undefined) continue;
-      if (effectiveMessageIds.has(m.id) === effectiveMessageIds.has(resultId)) {
-        continue;
-      }
-      withdrawIds.add(m.id);
-      withdrawIds.add(resultId);
-      splitPairCount++;
-    }
+    const {
+      withdrawn: withdrawIds,
+      splitTurnCount,
+      splitPairCount,
+    } = computeIntegrityWithdrawals(input.messages, effectiveMessageIds);
     if (withdrawIds.size > 0) {
       for (const id of withdrawIds) effectiveMessageIds.delete(id);
       const beforeWithdraw = filteredIds.length;
