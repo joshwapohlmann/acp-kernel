@@ -154,12 +154,14 @@ export function buildCompressibleRanges(
     chars: number;
     isTool: boolean;
     isUser: boolean;
+    index: number;
   }[] = [];
   const protectedMsgs: {
     ref: string;
     gapBefore: boolean;
     tokens: number;
     tools: string[];
+    index: number;
   }[] = [];
 
   // Pairing: a tool-result may carry only toolCallId (no toolName). Collect the
@@ -175,8 +177,10 @@ export function buildCompressibleRanges(
   // two rules coincide, so ranges are byte-identical to the old behavior.
   let skipSinceCompressible = false;
   let skipSinceProtected = false;
+  let msgIndex = -1;
 
   for (const msg of messages) {
+    msgIndex++;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
     if (isSyntheticOrPruned(msg, state)) {
@@ -191,6 +195,7 @@ export function buildCompressibleRanges(
         gapBefore: skipSinceProtected,
         tokens: countMessageTokens(msg, countTokens),
         tools: msg.toolName ? [msg.toolName] : [],
+        index: msgIndex,
       });
       skipSinceProtected = false;
       skipSinceCompressible = true;
@@ -210,6 +215,7 @@ export function buildCompressibleRanges(
       chars: (msg.text ?? "").length,
       isTool: isToolMessage(msg),
       isUser: msg.role === "user",
+      index: msgIndex,
     });
     skipSinceCompressible = false;
     skipSinceProtected = true;
@@ -238,9 +244,12 @@ export function buildCompressibleRanges(
         toolPct: info.isTool ? 100 : 0,
         textPct: info.isTool ? 0 : 100,
         userMsgs: info.isUser ? 1 : 0,
+        startIndex: info.index,
+        endIndex: info.index,
       };
     } else {
       cur.endRef = info.ref;
+      cur.endIndex = info.index;
       cur.count++;
       cur.tokens += info.tokens;
       cur.chars = (cur.chars ?? 0) + info.chars;
@@ -271,9 +280,12 @@ export function buildCompressibleRanges(
         count: 1,
         tokens: info.tokens,
         tools: [...info.tools],
+        startIndex: info.index,
+        endIndex: info.index,
       };
     } else {
       pcur.endRef = info.ref;
+      pcur.endIndex = info.index;
       pcur.count++;
       pcur.tokens += info.tokens;
       for (const t of info.tools) {
@@ -308,6 +320,10 @@ function mergeBatch(batch: CompressibleRange[]): CompressibleRange {
     textPct: 100 - toolPct,
     userMsgs: batch.reduce((s, r) => s + (r.userMsgs ?? 0), 0),
   };
+  if (first.startIndex !== undefined && last.endIndex !== undefined) {
+    merged.startIndex = Math.min(...batch.map((r) => r.startIndex ?? Infinity));
+    merged.endIndex = Math.max(...batch.map((r) => r.endIndex ?? -Infinity));
+  }
   if (batch.some((r) => r.dangerous === true)) {
     merged.dangerous = true;
   }
