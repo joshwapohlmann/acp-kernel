@@ -10,7 +10,7 @@
 // recent-N window (self-healing downstream via orphan-GC). Shared across hosts
 // (proxy + in-process adapters) so "which field carries an image" has one home.
 
-export type StripProtocol = "anthropic" | "openai" | "responses" | null;
+export type StripProtocol = "anthropic" | "openai" | "responses" | "google" | null;
 
 export interface StripResult {
   body: unknown;
@@ -30,12 +30,18 @@ function isImagePart(
   if (!isObj(part)) return false;
   if (protocol === "responses") return part.type === "input_image";
   if (protocol === "openai") return part.type === "image_url";
+  // Gemini carries image payloads in two nested part variants (inline bytes,
+  // or a Files API reference); both are raw base64/remote bytes.
+  if (protocol === "google")
+    return isObj(part.inlineData) || isObj(part.fileData);
   return part.type === "image";
 }
 
 function placeholderContent(
   protocol: Exclude<StripProtocol, null>,
 ): Record<string, unknown>[] {
+  // Gemini parts have no `type` discriminator — a text part is just {text}.
+  if (protocol === "google") return [{ text: IMAGE_PLACEHOLDER }];
   const type = protocol === "responses" ? "input_text" : "text";
   return [{ type, text: IMAGE_PLACEHOLDER }];
 }
@@ -76,6 +82,34 @@ export function stripHistoricalImages(
     });
     if (!touched) return { body, removed: 0 };
     return { body: { ...body, input: nextInput }, removed };
+  }
+
+  // Gemini: the conversation lives in `contents`, each content carrying a
+  // `parts` array (no `content` field, no per-part `type` discriminator).
+  if (protocol === "google") {
+    const contents = body.contents;
+    if (!Array.isArray(contents)) return { body, removed: 0 };
+    const cutoff = contents.length - recentCount;
+    let removed = 0;
+    let touched = false;
+    const nextContents = contents.map((c, i) => {
+      if (i < cutoff && isObj(c) && Array.isArray(c.parts)) {
+        const parts = c.parts as unknown[];
+        const imgs = parts.filter((p) => isImagePart("google", p)).length;
+        if (imgs > 0) {
+          removed += imgs;
+          touched = true;
+          const kept = parts.filter((p) => !isImagePart("google", p));
+          return {
+            ...c,
+            parts: kept.length > 0 ? kept : placeholderContent("google"),
+          };
+        }
+      }
+      return c;
+    });
+    if (!touched) return { body, removed: 0 };
+    return { body: { ...body, contents: nextContents }, removed };
   }
 
   const messages = body.messages;
