@@ -81,6 +81,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   // and partly protected, which only the merged view shows correctly.
   interface Merged {
     startRef: string; endRef: string; startNum: number; endNum: number;
+    startPos: number; endPos: number;
     count: number; tokens: number; userMsgs: number;
     compressibleTokens: number; compressibleCount: number;
     protectedTokens: number; protectedCount: number; protectedTools: string[];
@@ -94,6 +95,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   for (const r of compressible) {
     entries.push({
       startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
+      startPos: r.startIndex ?? refNum(r.startRef), endPos: r.endIndex ?? refNum(r.endRef),
       count: r.count, tokens: r.tokens, userMsgs: r.userMsgs ?? 0, toolPct: r.toolPct, textPct: r.textPct,
       compressibleTokens: r.tokens, compressibleCount: r.count,
       protectedTokens: 0, protectedCount: 0, protectedTools: [], dangerous: r.dangerous ?? false,
@@ -102,19 +104,24 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   for (const r of protectedRanges) {
     entries.push({
       startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
+      startPos: r.startIndex ?? refNum(r.startRef), endPos: r.endIndex ?? refNum(r.endRef),
       count: r.count, tokens: r.tokens, userMsgs: 0, toolPct: 0, textPct: 0,
       compressibleTokens: 0, compressibleCount: 0,
       protectedTokens: r.tokens, protectedCount: r.count, protectedTools: [...r.tools], dangerous: false,
     });
   }
-  entries.sort((a, b) => a.startNum - b.startNum);
-  // Merge adjacent/overlapping ranges (gap ≤ 1 ref).
+  // Order/merge by POSITION, never ref number: refs can be non-monotonic vs array
+  // order (subagent interleaving / mid-array summary nodes), and ref-number merging
+  // then yields endpoints resolveBoundaries collapses to a tiny slice (#887).
+  entries.sort((a, b) => a.startPos - b.startPos || a.startNum - b.startNum);
+  // Merge positionally adjacent/overlapping ranges (gap ≤ 1 slot).
   const merged: Merged[] = [];
   for (const e of entries) {
     const last = merged[merged.length - 1];
-    if (last && e.startNum <= last.endNum + 1) {
+    if (last && e.startPos <= last.endPos + 1) {
       last.endRef = e.endRef;
       last.endNum = Math.max(last.endNum, e.endNum);
+      last.endPos = Math.max(last.endPos, e.endPos);
       last.count += e.count;
       last.tokens += e.tokens;
       last.userMsgs += e.userMsgs;

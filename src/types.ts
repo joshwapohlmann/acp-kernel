@@ -269,6 +269,15 @@ export interface CompressibleRange {
    *  every user request, so the count tells the model whether it needs a
    *  per-message listing before compressing. Absent on hand-built ranges. */
   userMsgs?: number;
+  /** Messages-array index of this range's first message (buildCompressibleRanges
+   *  / mergeBatch). formatRanges orders/merges by POSITION via these, never by
+   *  ref number — ref order can be non-monotonic vs array order (subagent
+   *  interleaving, mid-array summary nodes), and ref-number merging then yields
+   *  endpoints resolveBoundaries collapses to a tiny slice (#887). Absent on
+   *  hand-built ranges → formatRanges falls back to ref-number ordering. */
+  startIndex?: number;
+  /** Messages-array index of this range's last message. */
+  endIndex?: number;
 }
 
 export interface ProtectedRange {
@@ -277,6 +286,10 @@ export interface ProtectedRange {
   count: number;
   tokens: number;
   tools: string[];
+  /** Messages-array index of first message (see CompressibleRange.startIndex). */
+  startIndex?: number;
+  /** Messages-array index of last message. */
+  endIndex?: number;
 }
 
 export interface ContextRanges {
